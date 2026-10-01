@@ -5,9 +5,9 @@
 
 mod app;
 mod commands;
-mod metadata;
 #[cfg(target_os = "macos")]
 mod macos;
+mod metadata;
 mod preferences;
 mod storage;
 mod workspace;
@@ -31,6 +31,7 @@ struct Desktop {
     input: Option<egui_winit::State>,
     painter: Option<Painter>,
     next_repaint: Option<Instant>,
+    window_shown: bool,
     startup_error: Option<Box<dyn Error>>,
     #[cfg(target_os = "macos")]
     menu_proxy: winit::event_loop::EventLoopProxy<Instant>,
@@ -79,9 +80,10 @@ impl Desktop {
         );
         self.input = Some(input);
         self.painter = Some(painter);
+        self.window_shown = false;
         #[cfg(target_os = "macos")]
         {
-            macos::install_native_menu();
+            macos::install_native_menu(self.menu_proxy.clone());
             macos::set_application_icon();
         }
         window.request_redraw();
@@ -114,7 +116,10 @@ impl Desktop {
             .context
             .run_ui(input.take_egui_input(window), |ui| self.app.ui(ui));
         #[cfg(target_os = "macos")]
-        macos::update_menu_state(self.app.native_menu_state(), self.context.wants_keyboard_input());
+        macos::update_menu_state(
+            self.app.native_menu_state(),
+            self.context.egui_wants_keyboard_input(),
+        );
         input.handle_platform_output_with_event_loop(window, event_loop, output.platform_output);
         let primitives = self
             .context
@@ -133,7 +138,10 @@ impl Desktop {
             window,
         );
         window.set_title(&self.app.title());
-        window.set_visible(true);
+        if !self.window_shown {
+            window.set_visible(true);
+            self.window_shown = true;
+        }
 
         self.next_repaint = output
             .viewport_output
@@ -210,12 +218,30 @@ impl ApplicationHandler<Instant> for Desktop {
         #[cfg(target_os = "macos")]
         while let Some(action) = macos::take_menu_action() {
             match action {
-                macos::MenuAction::Command(command) => self.app.command(command),
+                macos::MenuAction::Command(command) => {
+                    let state = self.app.native_menu_state();
+                    let replaces_workspace = matches!(
+                        &command,
+                        commands::Command::NewWorkspace
+                            | commands::Command::OpenWorkspace
+                            | commands::Command::Save
+                            | commands::Command::SaveAs
+                            | commands::Command::CloseWorkspace
+                            | commands::Command::Quit
+                    );
+                    if !state.has_pending_action || !replaces_workspace {
+                        self.app.command(command);
+                    }
+                }
                 macos::MenuAction::Edit(edit) => {
                     if let Some(input) = &mut self.input {
                         match edit {
-                            macos::EditAction::Cut => input.egui_input_mut().events.push(egui::Event::Cut),
-                            macos::EditAction::Copy => input.egui_input_mut().events.push(egui::Event::Copy),
+                            macos::EditAction::Cut => {
+                                input.egui_input_mut().events.push(egui::Event::Cut)
+                            }
+                            macos::EditAction::Copy => {
+                                input.egui_input_mut().events.push(egui::Event::Copy)
+                            }
                             macos::EditAction::Paste => {
                                 if let Some(text) = input.clipboard_text() {
                                     input.egui_input_mut().events.push(egui::Event::Paste(text));
@@ -223,12 +249,24 @@ impl ApplicationHandler<Instant> for Desktop {
                             }
                             macos::EditAction::Undo => push_shortcut(input, egui::Key::Z, false),
                             macos::EditAction::Redo => push_shortcut(input, egui::Key::Z, true),
-                            macos::EditAction::SelectAll => push_shortcut(input, egui::Key::A, false),
+                            macos::EditAction::SelectAll => {
+                                push_shortcut(input, egui::Key::A, false)
+                            }
                         }
                     }
                 }
             }
-            if let Some(window) = &self.window { window.request_redraw(); }
+            macos::update_menu_state(
+                self.app.native_menu_state(),
+                self.context.egui_wants_keyboard_input(),
+            );
+            if self.app.should_quit() {
+                event_loop.exit();
+                return;
+            }
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
         }
         if let Some(deadline) = self.next_repaint {
             if deadline <= Instant::now() {
@@ -252,6 +290,25 @@ impl ApplicationHandler<Instant> for Desktop {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn push_shortcut(input: &mut egui_winit::State, key: egui::Key, shift: bool) {
+    let modifiers = egui::Modifiers {
+        mac_cmd: true,
+        command: true,
+        shift,
+        ..Default::default()
+    };
+    for pressed in [true, false] {
+        input.egui_input_mut().events.push(egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed,
+            repeat: false,
+            modifiers,
+        });
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
     let mut builder = EventLoop::<Instant>::with_user_event();
@@ -263,12 +320,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let event_loop = builder.build()?;
     let proxy = event_loop.create_proxy();
+    let repaint_proxy = proxy.clone();
     let context = egui::Context::default();
     context.set_request_repaint_callback(move |request| {
         if request.viewport_id == ViewportId::ROOT
             && let Some(deadline) = Instant::now().checked_add(request.delay)
         {
-            let _ = proxy.send_event(deadline);
+            let _ = repaint_proxy.send_event(deadline);
         }
     });
     let mut desktop = Desktop {
@@ -278,6 +336,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         input: None,
         painter: None,
         next_repaint: None,
+        window_shown: false,
         startup_error: None,
         #[cfg(target_os = "macos")]
         menu_proxy: proxy.clone(),

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+#[cfg(not(target_os = "macos"))]
 use egui::{Key, Modifiers};
 
 use crate::{
@@ -350,6 +351,7 @@ impl App {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn keyboard_shortcuts(&mut self, ctx: &egui::Context) {
         let shortcut = ctx.input_mut(|input| {
             let command = input.modifiers.command;
