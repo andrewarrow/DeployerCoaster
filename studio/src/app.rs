@@ -64,10 +64,6 @@ impl App {
         egui::Panel::top("app_menu").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
-                    if ui.button("New Workspace").clicked() {
-                        selected_command = Some(Command::NewWorkspace);
-                        ui.close();
-                    }
                     if ui.button("Open…").clicked() {
                         selected_command = Some(Command::OpenWorkspace);
                         ui.close();
@@ -136,7 +132,7 @@ impl App {
             });
         });
 
-        if self.preferences.show_activity {
+        if self.preferences.show_activity && (self.workspace.is_some() || self.status.is_some()) {
             egui::Panel::bottom("activity_panel")
                 .show_separator_line(false)
                 .show(ui, |ui| {
@@ -148,6 +144,7 @@ impl App {
 
         if !narrow_layout
             && self.preferences.show_sidebar
+            && self.workspace.is_some()
             && !self.preferences.recent_workspaces.is_empty()
         {
             egui::Panel::left("recent_workspaces")
@@ -239,31 +236,6 @@ impl App {
                     ui.add_space(8.0);
                     ui.label("Unsaved changes");
                 }
-            } else {
-                ui.heading("Workspace");
-                ui.horizontal(|ui| {
-                    if ui.button("New Workspace").clicked() {
-                        selected_command = Some(Command::NewWorkspace);
-                    }
-                    if ui.button("Open Workspace…").clicked() {
-                        selected_command = Some(Command::OpenWorkspace);
-                    }
-                });
-                if !self.preferences.recent_workspaces.is_empty()
-                    && (narrow_layout || !self.preferences.show_sidebar)
-                {
-                    ui.add_space(12.0);
-                    ui.label("Recent workspaces");
-                    for path in self.preferences.recent_workspaces.clone() {
-                        if ui
-                            .add(egui::Button::new(path.display().to_string()).truncate())
-                            .on_hover_text(path.display().to_string())
-                            .clicked()
-                        {
-                            selected_command = Some(Command::OpenPath(path));
-                        }
-                    }
-                }
             }
 
             if let Some(status) = &self.status
@@ -288,7 +260,6 @@ impl App {
 
     pub fn command(&mut self, command: Command) {
         match command {
-            Command::NewWorkspace => self.request_action(PendingAction::New),
             Command::OpenWorkspace => self.request_action(PendingAction::Open),
             Command::OpenPath(path) => self.request_action(PendingAction::OpenPath(path)),
             Command::Save => self.save(),
@@ -360,8 +331,6 @@ impl App {
             }
             if input.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::S) {
                 Some(Command::SaveAs)
-            } else if input.consume_key(Modifiers::COMMAND, Key::N) {
-                Some(Command::NewWorkspace)
             } else if input.consume_key(Modifiers::COMMAND, Key::O) {
                 Some(Command::OpenWorkspace)
             } else if input.consume_key(Modifiers::COMMAND, Key::S) {
@@ -389,10 +358,6 @@ impl App {
         self.status = None;
         self.status_is_error = false;
         match action {
-            PendingAction::New => {
-                self.workspace = Some(Workspace::new());
-                self.set_status("New workspace");
-            }
             PendingAction::Open => self.open_dialog(),
             PendingAction::OpenPath(path) => self.open_path(path),
             PendingAction::CloseWorkspace => {
@@ -545,7 +510,6 @@ impl App {
             return;
         };
         let action_label = match action {
-            PendingAction::New => "create a new workspace",
             PendingAction::Open | PendingAction::OpenPath(_) => "open another workspace",
             PendingAction::CloseWorkspace => "close this workspace",
             PendingAction::Quit => "quit",
@@ -594,8 +558,8 @@ mod tests {
         workspace.document.name = "Keep this workspace".to_owned();
         let mut app = app_with_workspace(workspace);
 
-        app.command(Command::NewWorkspace);
-        assert_eq!(app.pending_action, Some(PendingAction::New));
+        app.command(Command::OpenWorkspace);
+        assert_eq!(app.pending_action, Some(PendingAction::Open));
         app.command(Command::CancelPending);
 
         assert!(app.pending_action.is_none());

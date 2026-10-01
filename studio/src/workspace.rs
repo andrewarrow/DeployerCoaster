@@ -52,6 +52,7 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    #[cfg(test)]
     pub fn new() -> Self {
         Self {
             document: WorkspaceDocument {

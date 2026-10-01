@@ -23,7 +23,6 @@ use crate::{commands::Command, metadata};
 
 const ABOUT: isize = 1;
 const SETTINGS: isize = 2;
-const NEW: isize = 3;
 const OPEN: isize = 4;
 const SAVE: isize = 5;
 const SAVE_AS: isize = 6;
@@ -81,7 +80,7 @@ objc2::define_class!(
             let state = MENU_STATE.with(std::cell::Cell::get);
             match item.tag() {
                 SAVE | SAVE_AS | CLOSE_WORKSPACE => state.has_workspace && !state.has_pending_action,
-                NEW | OPEN | QUIT => !state.has_pending_action,
+                OPEN | QUIT => !state.has_pending_action,
                 UNDO | REDO | CUT | COPY | PASTE | SELECT_ALL => EDITABLE.with(std::cell::Cell::get),
                 ABOUT | SETTINGS | SIDEBAR | INSPECTOR | ACTIVITY => true,
                 _ => true,
@@ -93,7 +92,6 @@ objc2::define_class!(
             let action = match sender.tag() {
                 ABOUT => Some(MenuAction::Command(Command::About)),
                 SETTINGS => Some(MenuAction::Command(Command::Settings)),
-                NEW => Some(MenuAction::Command(Command::NewWorkspace)),
                 OPEN => Some(MenuAction::Command(Command::OpenWorkspace)),
                 SAVE => Some(MenuAction::Command(Command::Save)),
                 SAVE_AS => Some(MenuAction::Command(Command::SaveAs)),
@@ -193,17 +191,6 @@ pub(crate) fn install_native_menu(proxy: EventLoopProxy<Instant>) {
 
     let file = NSMenu::new(mtm);
     file.setTitle(ns_string!("File"));
-    add(
-        &file,
-        menu_item(
-            mtm,
-            target_obj,
-            "New Workspace",
-            "n",
-            NEW,
-            NSEventModifierFlags::Command,
-        ),
-    );
     add(
         &file,
         menu_item(
@@ -550,7 +537,6 @@ pub(crate) fn update_menu_state(state: MenuState, wants_keyboard_input: bool) {
             state.has_workspace && !state.has_pending_action,
             None,
         );
-        checked(&menu, NEW, !state.has_pending_action, None);
         checked(&menu, OPEN, !state.has_pending_action, None);
         checked(&menu, QUIT, !state.has_pending_action, None);
         checked(&menu, SIDEBAR, true, Some(state.show_sidebar));

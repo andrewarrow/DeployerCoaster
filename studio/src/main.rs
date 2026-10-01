@@ -222,8 +222,7 @@ impl ApplicationHandler<Instant> for Desktop {
                     let state = self.app.native_menu_state();
                     let replaces_workspace = matches!(
                         &command,
-                        commands::Command::NewWorkspace
-                            | commands::Command::OpenWorkspace
+                        commands::Command::OpenWorkspace
                             | commands::Command::Save
                             | commands::Command::SaveAs
                             | commands::Command::CloseWorkspace

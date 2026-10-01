@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
 pub enum Command {
-    NewWorkspace,
     OpenWorkspace,
     OpenPath(PathBuf),
     Save,
@@ -20,7 +19,6 @@ pub enum Command {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PendingAction {
-    New,
     Open,
     OpenPath(PathBuf),
     CloseWorkspace,
