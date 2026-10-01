@@ -1,6 +1,9 @@
-use std::{fs, path::{Path, PathBuf}};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use crate::storage::atomic_write;
 
@@ -22,7 +25,10 @@ pub struct WorkspaceDocument {
 impl WorkspaceDocument {
     pub fn validate(&self) -> Result<(), String> {
         if self.format_version != FORMAT_VERSION {
-            return Err(format!("Workspace format {} is unsupported. This app supports format {FORMAT_VERSION}.", self.format_version));
+            return Err(format!(
+                "Workspace format {} is unsupported. This app supports format {FORMAT_VERSION}.",
+                self.format_version
+            ));
         }
         if self.name.trim().is_empty() {
             return Err("Give the workspace a name before saving.".to_owned());
@@ -48,17 +54,28 @@ pub struct Workspace {
 impl Workspace {
     pub fn new() -> Self {
         Self {
-            document: WorkspaceDocument { format_version: FORMAT_VERSION, name: "Untitled".to_owned(), data: Map::new(), extra: Map::new() },
+            document: WorkspaceDocument {
+                format_version: FORMAT_VERSION,
+                name: "Untitled".to_owned(),
+                data: Map::new(),
+                extra: Map::new(),
+            },
             path: None,
             saved: None,
         }
     }
 
     pub fn open(path: PathBuf) -> Result<Self, String> {
-        let bytes = fs::read(&path).map_err(|error| format!("Could not read {}: {error}", path.display()))?;
-        let document: WorkspaceDocument = serde_json::from_slice(&bytes).map_err(|error| format!("This file is not a valid workspace: {error}"))?;
+        let bytes = fs::read(&path)
+            .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+        let document: WorkspaceDocument = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("This file is not a valid workspace: {error}"))?;
         document.validate()?;
-        Ok(Self { saved: Some(document.clone()), document, path: Some(path) })
+        Ok(Self {
+            saved: Some(document.clone()),
+            document,
+            path: Some(path),
+        })
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -80,8 +97,14 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("test.dcstudio");
         let mut workspace = Workspace::new();
-        workspace.document.data.insert("nested".into(), serde_json::json!({"values": [1, "hello", null]}));
-        workspace.document.extra.insert("future_metadata".into(), serde_json::json!(true));
+        workspace.document.data.insert(
+            "nested".into(),
+            serde_json::json!({"values": [1, "hello", null]}),
+        );
+        workspace
+            .document
+            .extra
+            .insert("future_metadata".into(), serde_json::json!(true));
         workspace.document.save(&path).unwrap();
         let reopened = Workspace::open(path).unwrap();
         assert_eq!(reopened.document, workspace.document);

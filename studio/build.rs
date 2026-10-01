@@ -2,7 +2,10 @@ use std::{env, process::Command};
 
 fn git(args: &[&str]) -> Option<String> {
     let output = Command::new("git").args(args).output().ok()?;
-    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 fn main() {
@@ -13,7 +16,8 @@ fn main() {
         }
     }
     println!("cargo:rerun-if-env-changed=DEPLOYERCOASTER_GIT_SHA");
-    let sha = env::var("DEPLOYERCOASTER_GIT_SHA").ok()
+    let sha = env::var("DEPLOYERCOASTER_GIT_SHA")
+        .ok()
         .or_else(|| git(&["rev-parse", "--short=8", "HEAD"]))
         .filter(|sha| sha.len() == 8 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
         .unwrap_or_else(|| "UNKNOWN".to_owned());
