@@ -6,6 +6,8 @@
 mod app;
 mod commands;
 mod metadata;
+#[cfg(target_os = "macos")]
+mod macos;
 mod preferences;
 mod storage;
 mod workspace;
@@ -30,6 +32,8 @@ struct Desktop {
     painter: Option<Painter>,
     next_repaint: Option<Instant>,
     startup_error: Option<Box<dyn Error>>,
+    #[cfg(target_os = "macos")]
+    menu_proxy: winit::event_loop::EventLoopProxy<Instant>,
 }
 
 impl Desktop {
@@ -75,6 +79,11 @@ impl Desktop {
         );
         self.input = Some(input);
         self.painter = Some(painter);
+        #[cfg(target_os = "macos")]
+        {
+            macos::install_native_menu();
+            macos::set_application_icon();
+        }
         window.request_redraw();
         self.window = Some(window);
         Ok(())
@@ -104,6 +113,8 @@ impl Desktop {
         let output = self
             .context
             .run_ui(input.take_egui_input(window), |ui| self.app.ui(ui));
+        #[cfg(target_os = "macos")]
+        macos::update_menu_state(self.app.native_menu_state(), self.context.wants_keyboard_input());
         input.handle_platform_output_with_event_loop(window, event_loop, output.platform_output);
         let primitives = self
             .context
@@ -196,6 +207,29 @@ impl ApplicationHandler<Instant> for Desktop {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(target_os = "macos")]
+        while let Some(action) = macos::take_menu_action() {
+            match action {
+                macos::MenuAction::Command(command) => self.app.command(command),
+                macos::MenuAction::Edit(edit) => {
+                    if let Some(input) = &mut self.input {
+                        match edit {
+                            macos::EditAction::Cut => input.egui_input_mut().events.push(egui::Event::Cut),
+                            macos::EditAction::Copy => input.egui_input_mut().events.push(egui::Event::Copy),
+                            macos::EditAction::Paste => {
+                                if let Some(text) = input.clipboard_text() {
+                                    input.egui_input_mut().events.push(egui::Event::Paste(text));
+                                }
+                            }
+                            macos::EditAction::Undo => push_shortcut(input, egui::Key::Z, false),
+                            macos::EditAction::Redo => push_shortcut(input, egui::Key::Z, true),
+                            macos::EditAction::SelectAll => push_shortcut(input, egui::Key::A, false),
+                        }
+                    }
+                }
+            }
+            if let Some(window) = &self.window { window.request_redraw(); }
+        }
         if let Some(deadline) = self.next_repaint {
             if deadline <= Instant::now() {
                 self.next_repaint = None;
@@ -221,11 +255,11 @@ impl ApplicationHandler<Instant> for Desktop {
 fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
     let mut builder = EventLoop::<Instant>::with_user_event();
-    // The in-window File menu routes Quit through the unsaved-workspace guard.
     #[cfg(target_os = "macos")]
     {
         use winit::platform::macos::EventLoopBuilderExtMacOS;
-        builder.with_default_menu(false);
+        builder.with_default_menu(true);
+        builder.with_activation_policy(winit::platform::macos::ActivationPolicy::Regular);
     }
     let event_loop = builder.build()?;
     let proxy = event_loop.create_proxy();
@@ -245,6 +279,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         painter: None,
         next_repaint: None,
         startup_error: None,
+        #[cfg(target_os = "macos")]
+        menu_proxy: proxy.clone(),
     };
     event_loop.run_app(&mut desktop)?;
     if let Some(error) = desktop.startup_error {

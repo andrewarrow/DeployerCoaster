@@ -52,12 +52,14 @@ impl App {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         ctx.set_theme(self.preferences.appearance.theme());
+        #[cfg(not(target_os = "macos"))]
         if self.pending_action.is_none() {
             self.keyboard_shortcuts(&ctx);
         }
         let narrow_layout = ui.available_width() < 800.0;
 
         let mut selected_command = None;
+        #[cfg(not(target_os = "macos"))]
         egui::Panel::top("app_menu").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
@@ -293,7 +295,14 @@ impl App {
             Command::CloseWorkspace => self.request_action(PendingAction::CloseWorkspace),
             Command::Quit => self.request_action(PendingAction::Quit),
             Command::Settings => self.show_settings = true,
-            Command::About => self.show_about = true,
+            Command::About => {
+                #[cfg(target_os = "macos")]
+                crate::macos::show_about_panel();
+                #[cfg(not(target_os = "macos"))]
+                {
+                    self.show_about = true;
+                }
+            }
             Command::ToggleSidebar => {
                 self.preferences.show_sidebar = !self.preferences.show_sidebar;
                 self.save_preferences();
@@ -317,6 +326,17 @@ impl App {
 
     pub fn should_quit(&self) -> bool {
         self.quit
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn native_menu_state(&self) -> crate::macos::MenuState {
+        crate::macos::MenuState {
+            has_workspace: self.workspace.is_some(),
+            has_pending_action: self.pending_action.is_some(),
+            show_sidebar: self.preferences.show_sidebar,
+            show_inspector: self.preferences.show_inspector,
+            show_activity: self.preferences.show_activity,
+        }
     }
 
     pub fn title(&self) -> String {
