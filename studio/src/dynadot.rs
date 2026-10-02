@@ -774,7 +774,7 @@ mod tests {
                     let mut emails = 0;
                     for shape in &output.shapes {
                         if let egui::epaint::Shape::Text(text) = &shape.shape {
-                            if text.galley.job.text.starts_with("support@") {
+                            if text.galley.job.text.starts_with("andrew@") {
                                 emails += 1;
                                 assert_eq!(text.galley.rows.len(), 1, "Email wraps at {width}px");
                                 assert!(
