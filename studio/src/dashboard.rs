@@ -208,7 +208,7 @@ impl Dashboard {
                 )
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        if compact && self.mobile_detail && !matches!(self.navigation, 3..=5 | 8) {
+                        if compact && self.mobile_detail && !matches!(self.navigation, 3..=6) {
                             if ui.button("‹  My Apps").clicked() {
                                 self.mobile_detail = false;
                             }
@@ -218,7 +218,7 @@ impl Dashboard {
                                     3 => "Domains",
                                     4 => "Hosting",
                                     5 => "GitHub orgs",
-                                    8 => "Google OAuth",
+                                    6 => "Google OAuth",
                                     _ => "My Apps",
                                 })
                                 .show_ui(ui, |ui| {
@@ -226,7 +226,7 @@ impl Dashboard {
                                     ui.selectable_value(&mut self.navigation, 3, "Domains");
                                     ui.selectable_value(&mut self.navigation, 4, "Hosting");
                                     ui.selectable_value(&mut self.navigation, 5, "GitHub orgs");
-                                    ui.selectable_value(&mut self.navigation, 8, "Google OAuth");
+                                    ui.selectable_value(&mut self.navigation, 6, "Google OAuth");
                                 });
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -242,7 +242,7 @@ impl Dashboard {
                 });
         }
 
-        if !compact && !matches!(self.navigation, 3..=5 | 8) {
+        if !compact && !matches!(self.navigation, 3..=6) {
             egui::Panel::left("app_library")
                 .exact_size(if width < 1100.0 { 264.0 } else { 304.0 })
                 .resizable(false)
@@ -284,7 +284,7 @@ impl Dashboard {
                     }
                 } else if self.navigation == 5 {
                     self.github.ui(ui);
-                } else if self.navigation == 8 {
+                } else if self.navigation == 6 {
                     self.google_oauth.ui(ui);
                 } else if compact && !self.mobile_detail {
                     if self.app_list(
@@ -304,7 +304,7 @@ impl Dashboard {
                         .id_salt("product_detail")
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            if self.navigation > 1 && self.navigation != 6 && self.navigation != 8 {
+                            if self.navigation > 1 && self.navigation != 7 {
                                 self.service_page(ui, palette, &mut command);
                             } else if let Some(product) = selected {
                                 self.product_header(
@@ -486,7 +486,7 @@ impl Dashboard {
                         } else {
                             self.navigation = index;
                             self.tab = match index {
-                                6 => Tab::Analytics,
+                                7 => Tab::Analytics,
                                 _ => Tab::Overview,
                             };
                         }
@@ -1199,7 +1199,7 @@ impl Dashboard {
             2 => ("Websites", "No websites are connected yet."),
             3 => ("Domains", "No domains are connected yet."),
             4 => ("Hosting", "No hosting providers are connected yet."),
-            7 => ("Deployments", "No deployment sources are connected yet."),
+            8 => ("Deployments", "No deployment sources are connected yet."),
             _ => ("Team", "Team management isn't available yet."),
         };
         ui.heading(title);
@@ -1895,6 +1895,93 @@ impl Icon {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn google_oauth_navigation_opens_page_at_supported_sizes() {
+        fn label_position(output: &egui::FullOutput, label: &str) -> Pos2 {
+            output.shapes.iter().find_map(|shape| {
+                if let Shape::Text(text) = &shape.shape {
+                    (text.galley.text() == label).then(|| text.pos + text.galley.size() * 0.5)
+                } else {
+                    None
+                }
+            }).unwrap_or_else(|| panic!("Missing label: {label}"))
+        }
+
+        for (width, height) in [
+            (390.0, 844.0),
+            (768.0, 1024.0),
+            (1280.0, 800.0),
+            (1440.0, 900.0),
+        ] {
+            let mut dashboard = Dashboard {
+                google_oauth: crate::google_oauth::GoogleOAuth::test_connection(),
+                ..Default::default()
+            };
+            let mut play = PlayStore::default();
+            let mut apple = AppleStore::default();
+            let mut dynadot = crate::dynadot::Dynadot::default();
+            let ctx = egui::Context::default();
+            crate::style::configure(&ctx);
+            let mut render = |dashboard: &mut Dashboard, events| {
+                ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, height))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        dashboard.ui(ui, &mut play, &mut apple, &mut dynadot, true);
+                        assert!(ui.min_rect().right() <= width, "Overflow at {width}px");
+                    },
+                )
+            };
+            let mut click = |dashboard: &mut Dashboard, pos: Pos2| {
+                let _ = render(dashboard, vec![]);
+                let mut output = egui::FullOutput::default();
+                for pressed in [true, false] {
+                    output = render(dashboard, vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ]);
+                }
+                output
+            };
+            let mut output = click(&mut dashboard, pos2(width - 1.0, height - 1.0));
+            if width < 1100.0 {
+                let pos = label_position(&output, "My Apps");
+                output = click(&mut dashboard, pos);
+            }
+            let pos = label_position(&output, "Google OAuth");
+            let _ = click(&mut dashboard, pos);
+            assert_eq!(dashboard.navigation, 6, "OAuth click failed at {width}px");
+            // A selected app's mobile back button must not replace OAuth navigation.
+            dashboard.mobile_detail = true;
+            output = click(&mut dashboard, pos2(width - 1.0, height - 1.0));
+            label_position(&output, "Google OAuth");
+            label_position(&output, "Refresh projects");
+            label_position(&output, "No active Google Cloud projects are visible to this account.");
+            assert!(!output.shapes.iter().any(|shape| {
+                matches!(&shape.shape, Shape::Text(text) if text.galley.text() == "Search apps or identifiers…" || text.galley.text() == "‹  My Apps")
+            }), "App library appeared on OAuth page at {width}px");
+
+            if width >= 1100.0 {
+                let pos = label_position(&output, "Analytics");
+                output = click(&mut dashboard, pos);
+                assert_eq!(dashboard.navigation, 7);
+                assert!(dashboard.tab == Tab::Analytics);
+                let pos = label_position(&output, "Deployments");
+                output = click(&mut dashboard, pos);
+                assert_eq!(dashboard.navigation, 8);
+                label_position(&output, "No deployment sources are connected yet.");
+            }
+        }
+    }
 
     #[test]
     fn ecosystem_shows_org_arrow_and_fits_map_and_list_sizes() {

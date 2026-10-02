@@ -65,6 +65,16 @@ struct ProjectPage {
 }
 
 impl GoogleOAuth {
+    #[cfg(test)]
+    pub(crate) fn test_connection() -> Self {
+        Self {
+            attempted: true,
+            loaded: true,
+            branding_attempted: true,
+            ..Default::default()
+        }
+    }
+
     fn refresh(&mut self, ctx: &egui::Context) {
         if self.job.is_some() {
             return;
