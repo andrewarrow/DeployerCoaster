@@ -382,7 +382,7 @@ impl Dynadot {
             .iter()
             .filter(|domain| {
                 let value = if hosting {
-                    format!("support@{}", domain.domain_name)
+                    format!("andrew@{}", domain.domain_name)
                 } else {
                     domain.domain_name.clone()
                 };
@@ -427,7 +427,7 @@ impl Dynadot {
                             ui.label("");
                             ui.end_row();
                             for domain in &filtered {
-                                let email = format!("support@{}", domain.domain_name);
+                                let email = format!("andrew@{}", domain.domain_name);
                                 ui.add_sized(
                                     [email_width, 36.0],
                                     egui::Label::new(&email).truncate(),
