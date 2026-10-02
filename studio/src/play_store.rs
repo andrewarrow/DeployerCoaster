@@ -20,7 +20,7 @@ use oauth2::{
     url::Url,
 };
 use reqwest::{StatusCode, blocking::Client};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const PUBLISHER_SCOPE: &str = "https://www.googleapis.com/auth/androidpublisher";
 const REPORTING_SCOPE: &str = "https://www.googleapis.com/auth/playdeveloperreporting";
@@ -33,8 +33,8 @@ const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 type GoogleClient =
     BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
 
-// Credentials and tokens deliberately have no Debug implementation and stay in memory.
-#[derive(Clone, Deserialize)]
+// Credentials and tokens deliberately have no Debug implementation.
+#[derive(Clone, Deserialize, Serialize)]
 struct Credentials {
     client_id: String,
     client_secret: String,
@@ -109,7 +109,43 @@ struct Session {
     expires_at: Instant,
 }
 
+#[derive(Serialize, Deserialize)]
+struct SavedSession {
+    credentials: Credentials,
+    token: BasicTokenResponse,
+}
+
 impl Session {
+    fn save(&self, path: &std::path::Path) -> Result<(), String> {
+        let bytes = serde_json::to_vec(&SavedSession {
+            credentials: self.credentials.clone(),
+            token: self.token.clone(),
+        })
+        .map_err(|_| "Could not encode Google Play credentials")?;
+        crate::storage::save_credentials(path, &bytes)
+    }
+
+    fn load() -> Result<Option<Self>, String> {
+        let path = crate::storage::credential_path("google-session.json")?;
+        Self::load_from(&path)
+    }
+
+    fn load_from(path: &std::path::Path) -> Result<Option<Self>, String> {
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err("Could not read the saved Google Play session.".into()),
+        };
+        let saved: SavedSession = serde_json::from_slice(&bytes).map_err(
+            |_| "Could not load the saved Google Play session. Disconnect and connect again.",
+        )?;
+        // Force refresh on launch; monotonic expiry cannot survive a process restart.
+        Ok(Some(Self {
+            credentials: saved.credentials,
+            token: saved.token,
+            expires_at: Instant::now(),
+        }))
+    }
     fn new(credentials: Credentials, token: BasicTokenResponse) -> Self {
         let expires_at = Instant::now() + token.expires_in().unwrap_or(Duration::from_secs(3600));
         Self {
@@ -175,6 +211,7 @@ impl Drop for Job {
 #[derive(Default)]
 pub struct PlayStore {
     session: Option<Session>,
+    persistence_path: Option<PathBuf>,
     apps: Vec<PlayApp>,
     loaded: bool,
     job: Option<Job>,
@@ -183,8 +220,26 @@ pub struct PlayStore {
 }
 
 impl PlayStore {
+    pub fn load() -> Self {
+        match Session::load() {
+            Ok(session) => Self {
+                session,
+                persistence_path: crate::storage::credential_path("google-session.json").ok(),
+                ..Self::default()
+            },
+            Err(error) => Self {
+                error: Some(error),
+                persistence_path: crate::storage::credential_path("google-session.json").ok(),
+                ..Self::default()
+            },
+        }
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         self.poll();
+        if self.session.is_some() && !self.loaded && self.job.is_none() && self.error.is_none() {
+            self.start(ui.ctx());
+        }
         ui.set_max_width(ui.available_width().min(720.0));
         if self.session.is_none() {
             if self.job.is_none() {
@@ -214,7 +269,29 @@ impl PlayStore {
                     .add(egui::Button::new("Disconnect").min_size(egui::vec2(100.0, 44.0)))
                     .clicked()
                 {
-                    *self = Self::default();
+                    let result =
+                        crate::storage::credential_path("google-session.json").and_then(|path| {
+                            match fs::remove_file(path) {
+                                Ok(()) => Ok(()),
+                                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                                    Ok(())
+                                }
+                                Err(_) => {
+                                    Err("Could not remove the saved Google Play session."
+                                        .to_owned())
+                                }
+                            }
+                        });
+                    match result {
+                        Ok(()) => {
+                            let persistence_path = self.persistence_path.clone();
+                            *self = Self {
+                                persistence_path,
+                                ..Self::default()
+                            };
+                        }
+                        Err(error) => self.error = Some(error),
+                    }
                 }
             });
             if self.job.is_some() {
@@ -241,7 +318,8 @@ impl PlayStore {
                 ui.label("No apps are accessible to this Google account.");
             } else {
                 egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
+                    .max_height(240.0)
+                    .auto_shrink([false, true])
                     .show(ui, |ui| {
                         for app in &self.apps {
                             let title = if app.display_name.is_empty() {
@@ -327,7 +405,14 @@ impl PlayStore {
         while let Some(job) = &self.job {
             match job.events.try_recv() {
                 Ok(Event::Progress(message)) => self.progress = Some(message),
-                Ok(Event::SignedIn(session)) => self.session = Some(*session),
+                Ok(Event::SignedIn(session)) => {
+                    if let Some(path) = &self.persistence_path
+                        && let Err(error) = session.save(path)
+                    {
+                        self.error = Some(error);
+                    }
+                    self.session = Some(*session);
+                }
                 Ok(Event::Apps(apps)) => {
                     self.apps = apps;
                     self.loaded = true;
@@ -605,6 +690,27 @@ mod tests {
             }))
             .unwrap(),
         )
+    }
+
+    #[test]
+    fn saved_session_restores_refresh_token_and_forces_refresh() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.json");
+        session().save(&path).unwrap();
+        let restored = Session::load_from(&path).unwrap().unwrap();
+        assert_eq!(
+            restored.token.refresh_token().unwrap().secret(),
+            "test-refresh-token"
+        );
+        assert!(restored.expires_at <= Instant::now());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
     }
 
     fn test_http() -> Client {

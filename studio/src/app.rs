@@ -22,6 +22,7 @@ pub struct App {
     status: Option<String>,
     status_is_error: bool,
     play_store: PlayStore,
+    apple: crate::apple::AppleSettings,
 }
 
 impl App {
@@ -45,7 +46,8 @@ impl App {
             show_about: false,
             status_is_error: preference_error.is_some(),
             status: preference_error,
-            play_store: PlayStore::default(),
+            play_store: PlayStore::load(),
+            apple: crate::apple::AppleSettings::load(),
         };
         if let Some(path) = initial_path {
             app.open_path(path);
@@ -240,7 +242,7 @@ impl App {
                     ui.label("Unsaved changes");
                 }
             } else {
-                self.play_store.ui(ui);
+                self.store_settings(ui);
             }
 
             if let Some(status) = &self.status
@@ -465,6 +467,20 @@ impl App {
         self.status_is_error = true;
     }
 
+    fn store_settings(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.set_max_width(ui.available_width().min(560.0));
+            ui.heading("Settings");
+            ui.add_space(16.0);
+            ui.heading("Android");
+            ui.label("Google Play Store");
+            ui.add_space(8.0);
+            self.play_store.ui(ui);
+            ui.add_space(24.0);
+            self.apple.ui(ui);
+        });
+    }
+
     fn settings_window(&mut self, ctx: &egui::Context) {
         if !self.show_settings {
             return;
@@ -555,6 +571,36 @@ mod tests {
             status: None,
             status_is_error: false,
             play_store: PlayStore::default(),
+            apple: crate::apple::AppleSettings::default(),
+        }
+    }
+
+    #[test]
+    fn store_settings_fit_supported_window_sizes() {
+        for (width, height) in [
+            (390.0, 844.0),
+            (768.0, 1024.0),
+            (1280.0, 800.0),
+            (1440.0, 900.0),
+        ] {
+            let mut app = app_with_workspace(Workspace::new());
+            app.workspace = None;
+            let ctx = egui::Context::default();
+            for _ in 0..2 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, height),
+                    )),
+                    ..Default::default()
+                };
+                let _ = ctx.run_ui(input, |ui| {
+                    egui::CentralPanel::default_margins().show(ui, |ui| {
+                        app.store_settings(ui);
+                        assert!(ui.min_rect().right() <= width, "Overflow at {width}px");
+                    });
+                });
+            }
         }
     }
 
