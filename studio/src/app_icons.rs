@@ -111,6 +111,11 @@ impl AppIcons {
         }
     }
 
+    pub(crate) fn has_icon(&mut self, key: &str) -> bool {
+        self.poll();
+        self.icons.get(key).is_some_and(|icon| icon.image.is_some())
+    }
+
     pub fn ui_icon(&mut self, ui: &mut Ui, key: &str, title: &str) {
         let (rect, _) =
             ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::hover());

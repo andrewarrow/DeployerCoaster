@@ -306,6 +306,10 @@ impl AppleStore {
         }
     }
 
+    pub(crate) fn has_dashboard_icon(&mut self, key: &str) -> bool {
+        self.icons.has_icon(key)
+    }
+
     pub(crate) fn paint_dashboard_icon(
         &mut self,
         ui: &egui::Ui,

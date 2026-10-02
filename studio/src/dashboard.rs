@@ -558,19 +558,25 @@ impl Dashboard {
         ui.horizontal(|ui| {
             ui.heading("My Apps");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let (rect, _) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::hover());
-                let response =
-                    control(ui, rect, "refresh_apps", "Refresh apps").on_hover_text("Refresh apps");
-                Icon::Refresh.paint(
-                    ui,
-                    rect.min + vec2(8.0, 8.0),
-                    16.0,
-                    if response.hovered() || response.has_focus() {
-                        p.blue
-                    } else {
-                        p.muted
-                    },
-                );
+                let loading = apple_status.loading || play_status.loading;
+                let response = ui.add_enabled_ui(!loading, refresh_control).inner;
+                let rect = response.rect;
+                if loading {
+                    egui::Spinner::new()
+                        .size(16.0)
+                        .paint_at(ui, Rect::from_center_size(rect.center(), vec2(16.0, 16.0)));
+                } else {
+                    Icon::Refresh.paint(
+                        ui,
+                        rect.min + vec2(8.0, 8.0),
+                        16.0,
+                        if response.hovered() || response.has_focus() {
+                            p.blue
+                        } else {
+                            p.muted
+                        },
+                    );
+                }
                 if response.clicked() {
                     play.refresh_dashboard(ui.ctx());
                     apple.refresh_dashboard(ui.ctx());
@@ -652,6 +658,7 @@ impl Dashboard {
                         ui,
                         Rect::from_min_size(rect.min + vec2(10.0, 14.0), vec2(48.0, 48.0)),
                         product,
+                        self.filter,
                         play,
                         apple,
                     );
@@ -768,6 +775,7 @@ impl Dashboard {
             ui,
             Rect::from_min_size(rect.min, vec2(80.0, 80.0)),
             product,
+            self.filter,
             play,
             apple,
         );
@@ -1074,6 +1082,7 @@ impl Dashboard {
                         ui,
                         Rect::from_center_size(core.center() - vec2(0.0, 12.0), vec2(72.0, 72.0)),
                         product,
+                        self.filter,
                         play,
                         apple,
                     );
@@ -1514,10 +1523,19 @@ fn paint_product(
     ui: &Ui,
     rect: Rect,
     product: &Product,
+    filter: Filter,
     play: &mut PlayStore,
     apple: &mut AppleStore,
 ) {
-    if let Some(listing) = product.listings.first() {
+    let preferred = match filter {
+        Filter::Android => Store::Play,
+        Filter::All | Filter::Apple => Store::Apple,
+    };
+    let listing = product_icon_listing(product, preferred, |listing| match listing.store {
+        Store::Apple => apple.has_dashboard_icon(&listing.identifier),
+        Store::Play => play.has_dashboard_icon(&listing.identifier),
+    });
+    if let Some(listing) = listing {
         match listing.store {
             Store::Apple => {
                 apple.paint_dashboard_icon(ui, rect, &listing.identifier, &product.name)
@@ -1525,6 +1543,33 @@ fn paint_product(
             Store::Play => play.paint_dashboard_icon(ui, rect, &listing.identifier, &product.name),
         }
     }
+}
+
+fn product_icon_listing(
+    product: &Product,
+    preferred: Store,
+    mut has_icon: impl FnMut(&StoreApp) -> bool,
+) -> Option<&StoreApp> {
+    product
+        .listings
+        .iter()
+        .find(|listing| listing.store == preferred && has_icon(listing))
+        .or_else(|| product.listings.iter().find(|listing| has_icon(listing)))
+        .or_else(|| {
+            product
+                .listings
+                .iter()
+                .find(|listing| listing.store == preferred)
+        })
+        .or_else(|| product.listings.first())
+}
+
+fn refresh_control(ui: &mut Ui) -> Response {
+    let (_, response) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Refresh apps")
+    });
+    response.on_hover_text("Refresh apps")
 }
 
 fn control(ui: &Ui, rect: Rect, id: impl egui::AsIdSalt, label: &str) -> Response {
@@ -1781,6 +1826,91 @@ impl Icon {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn product_artwork_uses_selected_store_and_falls_back_to_available_icon() {
+        let products = products(vec![
+            StoreApp {
+                identifier: "example.app".into(),
+                name: "Example".into(),
+                store_id: "123".into(),
+                store: Store::Apple,
+            },
+            StoreApp {
+                identifier: "example.app".into(),
+                name: "Example".into(),
+                store_id: "example.app".into(),
+                store: Store::Play,
+            },
+        ]);
+        let product = &products[0];
+        assert!(
+            product_icon_listing(product, Store::Play, |_| true)
+                .unwrap()
+                .store
+                == Store::Play
+        );
+        assert!(
+            product_icon_listing(product, Store::Apple, |_| true)
+                .unwrap()
+                .store
+                == Store::Apple
+        );
+        assert!(
+            product_icon_listing(product, Store::Apple, |l| l.store == Store::Play)
+                .unwrap()
+                .store
+                == Store::Play
+        );
+        assert!(
+            product_icon_listing(product, Store::Play, |_| false)
+                .unwrap()
+                .store
+                == Store::Play
+        );
+    }
+
+    #[test]
+    fn refresh_control_receives_pointer_click_in_app_list_header() {
+        for width in [272.0, 390.0] {
+            let ctx = egui::Context::default();
+            let mut rect = Rect::NOTHING;
+            let mut clicked = false;
+            for phase in 0..3 {
+                let mut input = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 844.0))),
+                    ..Default::default()
+                };
+                if phase > 0 {
+                    input.events = vec![
+                        egui::Event::PointerMoved(rect.center()),
+                        egui::Event::PointerButton {
+                            pos: rect.center(),
+                            button: egui::PointerButton::Primary,
+                            pressed: phase == 1,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ];
+                }
+                let _ = ctx.run_ui(input, |ui| {
+                    egui::CentralPanel::default_margins().show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.heading("My Apps");
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let response = refresh_control(ui);
+                                    rect = response.rect;
+                                    clicked |= response.clicked();
+                                },
+                            );
+                        });
+                    });
+                });
+            }
+            assert!(clicked, "Refresh did not receive a click at {width}px");
+        }
+    }
 
     #[test]
     fn store_listings_merge_by_identifier_and_keep_distinct_apps() {
