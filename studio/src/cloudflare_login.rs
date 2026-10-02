@@ -1,13 +1,12 @@
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{
-    io::{Read, Write},
-    process::{Command, Stdio},
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
     time::{Duration, Instant},
 };
 
 const LOGIN_URL: &str = "https://dash.cloudflare.com/login";
+const BROWSER_API: &str = "http://127.0.0.1:9001";
 const TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
@@ -48,7 +47,7 @@ impl CloudflareLogin {
                 Ok(result) => {
                     self.job = None;
                     self.message = Some(result.map(|()| {
-                        "Email and password filled. Finish signing in in your browser.".into()
+                        "Email and password filled. Finish signing in in wkdomains.".into()
                     }));
                 }
                 Err(TryRecvError::Disconnected) => {
@@ -61,7 +60,7 @@ impl CloudflareLogin {
         if self.busy() {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label("Opening Cloudflare login…");
+                ui.label("Opening Cloudflare login in wkdomains…");
             });
         }
         if let Some(message) = &self.message {
@@ -77,166 +76,309 @@ impl CloudflareLogin {
     }
 }
 
-// Use the existing default browser session and native controls; never launch
-// a separate profile or enable a browser debugging protocol.
 fn open_login(email: &str, password: &str) -> Result<(), String> {
-    webbrowser::open(LOGIN_URL)
-        .map_err(|_| "Could not open Cloudflare in your default browser.".to_owned())?;
-    prepare_login(email, password)
+    prepare_login(BROWSER_API, email, password)
 }
 
-#[cfg(target_os = "macos")]
-fn prepare_login(email: &str, password: &str) -> Result<(), String> {
-    let script = format!(
-        r#"
-        {ui_script}
-        ObjC.import('AppKit');
-        const url = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL($.NSURL.URLWithString('{LOGIN_URL}'));
-        if (!url) throw Error('Default browser unavailable');
-        const id = ObjC.unwrap($.NSBundle.bundleWithURL(url).bundleIdentifier);
-        const se = Application('System Events');
-        let result = 'unavailable';
-        try {{
-            const processes = se.processes.whose({{bundleIdentifier: id}})();
-            if (processes.length) {{
-                processes[0].frontmost = true;
-                result = prepareCloudflareLogin(se, processes[0], {credentials});
-            }}
-        }} catch (error) {{
-            result = (error.errorNumber === -25211 || error.errorNumber === -1743)
-                ? 'permission' : 'unavailable';
-        }}
-        result;
-    "#,
-        ui_script = include_str!("cloudflare_login.js"),
-        credentials = json!([email, password])
-    );
-    match run_jxa(&script)?.trim() {
-        "filled" => Ok(()),
-        "permission" => Err("Cloudflare opened. Enable Accessibility and Automation access for DeployerCoaster in System Settings → Privacy & Security to select another profile and fill the fields. You can also do this manually in the browser.".into()),
-        "focus" => Err("Cloudflare opened. Keep the browser in front while Login selects the profile and fills the fields.".into()),
-        _ => Err("Cloudflare opened, but its login controls were unavailable. Click ‘Sign in with another profile’ in the browser, or complete any verification and try Login again.".into()),
+fn is_login_url(value: &str) -> bool {
+    reqwest::Url::parse(value).is_ok_and(|url| {
+        url.scheme() == "https"
+            && url.host_str() == Some("dash.cloudflare.com")
+            && url.port_or_known_default() == Some(443)
+            && url.path() == "/login"
+    })
+}
+
+struct BrowserApi {
+    client: reqwest::blocking::Client,
+    base: String,
+}
+
+impl BrowserApi {
+    fn new(base: &str) -> Result<Self, String> {
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(2))
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|_| "Could not connect to the wkdomains browser.".to_owned())?;
+        Ok(Self {
+            client,
+            base: base.into(),
+        })
     }
-}
 
-#[cfg(not(target_os = "macos"))]
-fn prepare_login(_email: &str, _password: &str) -> Result<(), String> {
-    Err("Cloudflare opened. Select ‘Sign in with another profile’ and enter your credentials in the browser. Automatic form preparation is currently supported on macOS.".into())
-}
-
-#[cfg(target_os = "macos")]
-fn run_jxa(script: &str) -> Result<String, String> {
-    // Script goes through stdin: credentials never appear in process arguments or files.
-    let mut child = Command::new("/usr/bin/osascript")
-        .env_remove("CF_GREEN")
-        .args(["-l", "JavaScript", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| "Could not start browser automation.".to_owned())?;
-    let result = (|| {
-        child
-            .stdin
-            .take()
-            .ok_or("Could not contact browser automation.")?
-            .write_all(script.as_bytes())
-            .map_err(|_| "Could not contact browser automation.")?;
-        let deadline = Instant::now() + TIMEOUT;
-        let status = loop {
-            if let Some(status) = child
-                .try_wait()
-                .map_err(|_| "Browser automation stopped.")?
-            {
-                break status;
-            }
-            if Instant::now() >= deadline {
-                return Err("Browser automation timed out.".into());
-            }
-            thread::sleep(Duration::from_millis(100));
+    fn request(&self, path: &str, body: Option<Value>) -> Result<Value, String> {
+        let url = format!("{}{path}", self.base);
+        let request = match body {
+            Some(body) => self.client.post(url).json(&body),
+            None => self.client.get(url),
         };
-        if !status.success() {
-            return Err("Could not automate your default browser.".into());
+        let response = request.send()
+            .map_err(|_| "Could not reach wkdomains. Open the browser with its HTTP API on port 9001, then try Login again.".to_owned())?;
+        if !response.status().is_success() {
+            return Err("wkdomains could not complete the browser action. Check the page and try Login again.".into());
         }
-        let mut output = String::new();
-        child
-            .stdout
-            .take()
-            .ok_or("Browser automation stopped.")?
-            .read_to_string(&mut output)
-            .map_err(|_| "Browser automation stopped.")?;
-        Ok(output)
-    })();
-    if result.is_err() {
-        let _ = child.kill();
-        let _ = child.wait();
+        // Never include provider response bodies or credential values in errors.
+        let result: Value = response
+            .json()
+            .map_err(|_| "wkdomains returned an invalid browser response.".to_owned())?;
+        if result.get("ok") == Some(&Value::Bool(false)) {
+            return Err("wkdomains could not complete the browser action. Check the page and try Login again.".into());
+        }
+        Ok(result)
     }
-    result
+
+    fn verify_page(&self) -> Result<(), String> {
+        let page = self.request("/api/v1/page", None)?;
+        verify_login_page(&page)
+    }
+
+    fn action(&self, body: Value) -> Result<(), String> {
+        self.verify_page()?;
+        let result = self.request("/api/v1/action", Some(body))?;
+        if result["ok"] != true {
+            return Err(
+                "wkdomains did not confirm the browser action. Check the page and try again."
+                    .into(),
+            );
+        }
+        verify_login_page(&result)
+    }
 }
 
-#[cfg(all(test, target_os = "macos"))]
+fn verify_login_page(page: &Value) -> Result<(), String> {
+    if page["url"].as_str().is_some_and(is_login_url) {
+        Ok(())
+    } else {
+        Err("The wkdomains browser left Cloudflare's login page. Try Login again.".into())
+    }
+}
+
+fn prepare_login(base: &str, email: &str, password: &str) -> Result<(), String> {
+    let browser = BrowserApi::new(base)?;
+    let navigation = browser.request(
+        "/api/v1/navigate",
+        Some(json!({"url": LOGIN_URL, "mode": "hard"})),
+    )?;
+    verify_login_page(&navigation)?;
+    let deadline = Instant::now() + TIMEOUT;
+    let mut selected_another_profile = false;
+    while Instant::now() < deadline {
+        let snapshot = browser.request("/api/v1/snapshot", None)?;
+        verify_login_page(&snapshot)?;
+        let elements = snapshot["elements"].as_array();
+        let elements = elements.map(Vec::as_slice).unwrap_or_default();
+        if !selected_another_profile
+            && elements.iter().any(|element| {
+                element["role"] == "button"
+                    && (element["label"] == "Sign in with another profile"
+                        || element["text"] == "Sign in with another profile")
+                    && element["disabled"] != true
+            })
+        {
+            browser.action(json!({"type": "click", "role": "button", "name": "Sign in with another profile", "exact": true}))?;
+            selected_another_profile = true;
+            continue;
+        }
+        let field_exists = |name: &str| {
+            elements.iter().any(|element| {
+                element["tag"] == "input" && element["name"] == name && element["disabled"] != true
+            })
+        };
+        if field_exists("email") && field_exists("password") {
+            for (name, value) in [("email", email), ("password", password)] {
+                browser.action(json!({
+                    "type": "fill",
+                    "selector": format!("form[data-testid=\"login-form\"] input[name=\"{name}\"]"),
+                    "value": value
+                }))?;
+            }
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+    Err("Cloudflare's login form did not appear in wkdomains. Complete any verification in the browser, then try Login again.".into())
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        io::{BufRead, BufReader, Read, Write},
+        net::TcpListener,
+    };
+
+    struct Step {
+        method: &'static str,
+        path: &'static str,
+        body: Option<Value>,
+        response: Value,
+        status: u16,
+    }
+
+    fn step(
+        method: &'static str,
+        path: &'static str,
+        body: Option<Value>,
+        response: Value,
+    ) -> Step {
+        Step {
+            method,
+            path,
+            body,
+            response,
+            status: 200,
+        }
+    }
+
+    fn serve(steps: Vec<Step>) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            for step in steps {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut reader = BufReader::new(&mut stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                assert!(line.starts_with(&format!("{} {} ", step.method, step.path)));
+                let mut length = 0;
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse::<usize>().unwrap();
+                    }
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                if let Some(expected) = step.body {
+                    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), expected);
+                } else {
+                    assert!(body.is_empty());
+                }
+                let body = step.response.to_string();
+                write!(stream, "HTTP/1.1 {} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", step.status, body.len()).unwrap();
+            }
+        });
+        (format!("http://{address}"), server)
+    }
+
+    fn navigation() -> Step {
+        step(
+            "POST",
+            "/api/v1/navigate",
+            Some(json!({"url": LOGIN_URL, "mode": "hard"})),
+            json!({"ok": true, "url": LOGIN_URL}),
+        )
+    }
+
+    fn page() -> Step {
+        step("GET", "/api/v1/page", None, json!({"url": LOGIN_URL}))
+    }
+
+    fn fill(name: &str, value: &str) -> Step {
+        step(
+            "POST",
+            "/api/v1/action",
+            Some(json!({
+                "type": "fill", "selector": format!("form[data-testid=\"login-form\"] input[name=\"{name}\"]"), "value": value
+            })),
+            json!({"ok": true, "url": LOGIN_URL}),
+        )
+    }
+
+    fn form() -> Step {
+        step(
+            "GET",
+            "/api/v1/snapshot",
+            None,
+            json!({"url": LOGIN_URL, "elements": [
+                {"tag":"input", "name":"email", "type":"email"},
+                {"tag":"input", "name":"password", "type":"text"}
+            ]}),
+        )
+    }
 
     #[test]
-    fn native_login_selects_other_profile_and_types_only_in_the_verified_form() {
-        let script = format!(
-            r#"
-            {ui_script}
-            function scenario(url, frontmost, showSelector) {{
-                let selected = false, clicks = 0, focused = null;
-                const typed = [];
-                function element(attributes) {{
-                    const item = {{
-                        attributes: {{byName: name => ({{value: () => attributes[name] || ''}})}}
-                    }};
-                    Object.defineProperty(item, 'focused', {{
-                        get: () => () => focused === item,
-                        set: value => {{ if (value) focused = item; }}
-                    }});
-                    return item;
-                }}
-                const email = element({{AXRole:'AXTextField', AXDescription:'Email'}});
-                const password = element({{AXRole:'AXTextField', AXDescription:'Password', AXSubrole:'AXSecureTextField'}});
-                const button = element({{AXRole:'AXButton', AXTitle:'Sign in with another profile'}});
-                button.click = () => {{ selected = true; clicks++; }};
-                const area = element({{AXRole:'AXWebArea', AXURL:url}});
-                area.entireContents = () => showSelector && !selected ? [button] : [email, password];
-                const window = {{entireContents: () => [area]}};
-                const process = {{frontmost: () => frontmost, windows:[window]}};
-                const se = {{keystroke: (text, options) => {{
-                    if (!options) typed.push([focused === email ? 'email' : 'password', text]);
-                }}}};
-                const result = prepareCloudflareLogin(se, process, ['support@example.com', 'fake"$()!password'], () => {{}});
-                return {{result, clicks, typed}};
-            }}
-            JSON.stringify([
-                scenario('https://dash.cloudflare.com/login', true, true),
-                scenario('https://dash.cloudflare.com/login?redirect=home', true, false),
-                scenario('https://dash.cloudflare.com.evil.example/login', true, true),
-                scenario('https://dash.cloudflare.com/login', false, true)
-            ]);
-        "#,
-            ui_script = include_str!("cloudflare_login.js")
-        );
-        let output = run_jxa(&script).unwrap();
-        let cases: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
-        assert_eq!(cases[0]["result"], "filled");
-        assert_eq!(cases[0]["clicks"], 1);
-        assert_eq!(
-            cases[0]["typed"],
-            json!([
-                ["email", "support@example.com"],
-                ["password", "fake\"$()!password"]
-            ])
-        );
-        assert_eq!(cases[1]["result"], "filled");
-        assert_eq!(cases[1]["clicks"], 0);
-        for index in [2, 3] {
-            assert_eq!(cases[index]["clicks"], 0);
-            assert_eq!(cases[index]["typed"], json!([]));
-        }
-        assert_eq!(cases[2]["result"], "unavailable");
-        assert_eq!(cases[3]["result"], "focus");
+    fn browser_api_selects_another_profile_and_fills_without_submitting() {
+        let password = "fake\"$()!password";
+        let (base, server) = serve(vec![
+            navigation(),
+            step(
+                "GET",
+                "/api/v1/snapshot",
+                None,
+                json!({"url": LOGIN_URL, "elements": [
+                    {"role":"button", "label":"Sign in with another profile"}
+                ]}),
+            ),
+            page(),
+            step(
+                "POST",
+                "/api/v1/action",
+                Some(
+                    json!({"type":"click", "role":"button", "name":"Sign in with another profile", "exact":true}),
+                ),
+                json!({"ok":true, "url":LOGIN_URL}),
+            ),
+            form(),
+            page(),
+            fill("email", "support@example.com"),
+            page(),
+            fill("password", password),
+        ]);
+        prepare_login(&base, "support@example.com", password).unwrap();
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn browser_api_stops_before_filling_if_the_page_changes() {
+        let (base, server) = serve(vec![
+            navigation(),
+            form(),
+            step(
+                "GET",
+                "/api/v1/page",
+                None,
+                json!({"url":"https://dash.cloudflare.com.evil.example/login"}),
+            ),
+        ]);
+        let error = prepare_login(&base, "support@example.com", "fake-password").unwrap_err();
+        assert!(error.contains("left Cloudflare"));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn browser_api_errors_do_not_expose_credentials_or_response_details() {
+        let mut password_step = fill("password", "fake-secret");
+        password_step.response =
+            json!({"ok":false, "error":"fake-secret sensitive-provider-details"});
+        let (base, server) = serve(vec![
+            navigation(),
+            form(),
+            page(),
+            fill("email", "support@example.com"),
+            page(),
+            password_step,
+        ]);
+        let error = prepare_login(&base, "support@example.com", "fake-secret").unwrap_err();
+        assert!(!error.contains("fake-secret"));
+        assert!(!error.contains("sensitive-provider-details"));
+        server.join().unwrap();
+    }
+
+    #[test]
+    #[ignore = "Navigates the running wkdomains browser and fills Cloudflare using CF_GREEN; never submits"]
+    fn running_browser_fills_cloudflare() {
+        let password = std::env::var("CF_GREEN").expect("CF_GREEN must be set");
+        open_login("support@cubacadabra.com", &password).unwrap();
     }
 }
