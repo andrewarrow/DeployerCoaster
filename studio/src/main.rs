@@ -8,6 +8,7 @@ mod commands;
 #[cfg(target_os = "macos")]
 mod macos;
 mod metadata;
+mod play_store;
 mod preferences;
 mod storage;
 mod workspace;

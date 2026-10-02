@@ -6,6 +6,7 @@ use egui::{Key, Modifiers};
 use crate::{
     commands::{Command, PendingAction},
     metadata,
+    play_store::PlayStore,
     preferences::{Appearance, Preferences},
     workspace::{WORKSPACE_EXTENSION, Workspace},
 };
@@ -20,6 +21,7 @@ pub struct App {
     show_about: bool,
     status: Option<String>,
     status_is_error: bool,
+    play_store: PlayStore,
 }
 
 impl App {
@@ -43,6 +45,7 @@ impl App {
             show_about: false,
             status_is_error: preference_error.is_some(),
             status: preference_error,
+            play_store: PlayStore::default(),
         };
         if let Some(path) = initial_path {
             app.open_path(path);
@@ -236,6 +239,8 @@ impl App {
                     ui.add_space(8.0);
                     ui.label("Unsaved changes");
                 }
+            } else {
+                self.play_store.ui(ui);
             }
 
             if let Some(status) = &self.status
@@ -549,6 +554,7 @@ mod tests {
             show_about: false,
             status: None,
             status_is_error: false,
+            play_store: PlayStore::default(),
         }
     }
 
