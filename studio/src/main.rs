@@ -6,6 +6,7 @@
 mod app;
 mod app_icons;
 mod apple;
+mod cloudflare_login;
 mod commands;
 mod console_cookies;
 mod console_sync;

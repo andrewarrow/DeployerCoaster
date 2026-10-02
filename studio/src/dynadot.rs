@@ -37,6 +37,7 @@ pub(crate) struct Dynadot {
     feedback: Option<String>,
     search: String,
     hosting_search: String,
+    cloudflare_login: crate::cloudflare_login::CloudflareLogin,
     help_texture: Option<(egui::Context, egui::TextureHandle)>,
     show_help: bool,
 }
@@ -345,6 +346,9 @@ impl Dynadot {
             return settings;
         }
         self.error_ui(ui);
+        if hosting {
+            self.cloudflare_login.ui(ui);
+        }
         if self.job.is_some() {
             ui.horizontal(|ui| {
                 ui.spinner();
@@ -400,6 +404,7 @@ impl Dynadot {
             return settings;
         }
         let wide = ui.available_width() >= 600.0;
+        let mut login_email = None;
         egui::ScrollArea::vertical()
             .id_salt(if hosting {
                 "dynadot_hosting"
@@ -408,7 +413,9 @@ impl Dynadot {
             })
             .show(ui, |ui| {
                 if hosting {
-                    let email_width = ui.available_width().min(400.0);
+                    let email_width = (ui.available_width() - 72.0 - ui.spacing().item_spacing.x)
+                        .min(400.0)
+                        .max(0.0);
                     egui::Grid::new("dynadot_hosting_emails")
                         .striped(true)
                         .min_row_height(36.0)
@@ -417,6 +424,7 @@ impl Dynadot {
                                 [email_width, 24.0],
                                 egui::Label::new(egui::RichText::new("Email").strong()).truncate(),
                             );
+                            ui.label("");
                             ui.end_row();
                             for domain in &filtered {
                                 let email = format!("support@{}", domain.domain_name);
@@ -424,7 +432,19 @@ impl Dynadot {
                                     [email_width, 36.0],
                                     egui::Label::new(&email).truncate(),
                                 )
-                                .on_hover_text(email);
+                                .on_hover_text(&email);
+                                if ui
+                                    .add_enabled(
+                                        !self.cloudflare_login.busy(),
+                                        egui::Button::new("Login").min_size(egui::vec2(72.0, 44.0)),
+                                    )
+                                    .on_hover_text(format!(
+                                        "Open private Cloudflare login for {email}"
+                                    ))
+                                    .clicked()
+                                {
+                                    login_email = Some(email);
+                                }
                                 ui.end_row();
                             }
                         });
@@ -478,6 +498,9 @@ impl Dynadot {
                     }
                 }
             });
+        if let Some(email) = login_email {
+            self.cloudflare_login.start(email, ui.ctx());
+        }
         settings
     }
 }
