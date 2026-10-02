@@ -206,20 +206,21 @@ impl Dashboard {
                 )
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        if compact && self.mobile_detail && self.navigation != 3 {
+                        if compact && self.mobile_detail && !matches!(self.navigation, 3 | 4) {
                             if ui.button("‹  My Apps").clicked() {
                                 self.mobile_detail = false;
                             }
                         } else {
                             egui::ComboBox::from_id_salt("compact_section")
-                                .selected_text(if self.navigation == 3 {
-                                    "Domains"
-                                } else {
-                                    "My Apps"
+                                .selected_text(match self.navigation {
+                                    3 => "Domains",
+                                    4 => "Hosting",
+                                    _ => "My Apps",
                                 })
                                 .show_ui(ui, |ui| {
                                     ui.selectable_value(&mut self.navigation, 1, "My Apps");
                                     ui.selectable_value(&mut self.navigation, 3, "Domains");
+                                    ui.selectable_value(&mut self.navigation, 4, "Hosting");
                                 });
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -235,7 +236,7 @@ impl Dashboard {
                 });
         }
 
-        if !compact && self.navigation != 3 {
+        if !compact && !matches!(self.navigation, 3 | 4) {
             egui::Panel::left("app_library")
                 .exact_size(if width < 1100.0 { 264.0 } else { 304.0 })
                 .resizable(false)
@@ -269,6 +270,10 @@ impl Dashboard {
             .show(ui, |ui| {
                 if self.navigation == 3 {
                     if dynadot.domains_ui(ui) {
+                        command = Some(Command::DynadotSettings);
+                    }
+                } else if self.navigation == 4 {
+                    if dynadot.hosting_ui(ui) {
                         command = Some(Command::DynadotSettings);
                     }
                 } else if compact && !self.mobile_detail {

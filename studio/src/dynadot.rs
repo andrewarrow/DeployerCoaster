@@ -36,6 +36,7 @@ pub(crate) struct Dynadot {
     error: Option<String>,
     feedback: Option<String>,
     search: String,
+    hosting_search: String,
     help_texture: Option<(egui::Context, egui::TextureHandle)>,
     show_help: bool,
 }
@@ -150,6 +151,7 @@ impl Dynadot {
         self.loaded = false;
         self.error = None;
         self.search.clear();
+        self.hosting_search.clear();
     }
 
     pub(crate) fn settings_ui(&mut self, ui: &mut egui::Ui) {
@@ -304,13 +306,21 @@ impl Dynadot {
 
     /// Returns true when the user requests Dynadot settings.
     pub(crate) fn domains_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        self.domain_list_ui(ui, false)
+    }
+
+    pub(crate) fn hosting_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        self.domain_list_ui(ui, true)
+    }
+
+    fn domain_list_ui(&mut self, ui: &mut egui::Ui, hosting: bool) -> bool {
         self.poll();
         if self.saved.is_some() && !self.loaded && self.job.is_none() && self.error.is_none() {
             self.refresh(ui.ctx());
         }
         let mut settings = false;
         ui.horizontal_wrapped(|ui| {
-            ui.heading("Domains");
+            ui.heading(if hosting { "Hosting" } else { "Domains" });
             if self.saved.is_some() {
                 if ui
                     .add_enabled(
@@ -349,31 +359,71 @@ impl Dynadot {
             return settings;
         }
         ui.add_space(8.0);
-        ui.label("Search domains");
+        ui.label(if hosting {
+            "Search emails"
+        } else {
+            "Search domains"
+        });
+        let search = if hosting {
+            &mut self.hosting_search
+        } else {
+            &mut self.search
+        };
         ui.add(
-            egui::TextEdit::singleline(&mut self.search)
-                .desired_width(ui.available_width().min(400.0)),
+            egui::TextEdit::singleline(&mut *search).desired_width(ui.available_width().min(400.0)),
         );
-        let query = self.search.trim().to_lowercase();
+        let query = search.trim().to_lowercase();
         let filtered: Vec<_> = self
             .domains
             .iter()
-            .filter(|domain| domain.domain_name.to_lowercase().contains(&query))
+            .filter(|domain| {
+                let value = if hosting {
+                    format!("support@{}", domain.domain_name)
+                } else {
+                    domain.domain_name.clone()
+                };
+                value.to_lowercase().contains(&query)
+            })
             .collect();
         ui.label(format!(
-            "{} of {} domains · Dynadot",
+            "{} of {} {} · Dynadot",
             filtered.len(),
-            self.domains.len()
+            self.domains.len(),
+            if hosting { "emails" } else { "domains" }
         ));
         if filtered.is_empty() {
-            ui.label("No domains match your search.");
+            ui.label(if hosting {
+                "No emails match your search."
+            } else {
+                "No domains match your search."
+            });
             return settings;
         }
         let wide = ui.available_width() >= 600.0;
         egui::ScrollArea::vertical()
-            .id_salt("dynadot_domains")
+            .id_salt(if hosting {
+                "dynadot_hosting"
+            } else {
+                "dynadot_domains"
+            })
             .show(ui, |ui| {
-                if wide {
+                if hosting {
+                    egui::Grid::new("dynadot_hosting_emails")
+                        .striped(true)
+                        .min_row_height(36.0)
+                        .show(ui, |ui| {
+                            ui.strong("Email");
+                            ui.end_row();
+                            for domain in &filtered {
+                                ui.add_sized(
+                                    [ui.available_width(), 36.0],
+                                    egui::Label::new(format!("support@{}", domain.domain_name))
+                                        .wrap(),
+                                );
+                                ui.end_row();
+                            }
+                        });
+                } else if wide {
                     let column_width =
                         (ui.available_width() - ui.spacing().item_spacing.x * 3.0) / 4.0;
                     egui::Grid::new("dynadot_domain_table")
@@ -643,7 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn domain_list_fits_supported_window_sizes() {
+    fn domain_and_hosting_lists_fit_supported_window_sizes() {
         for (width, height) in [
             (390.0, 844.0),
             (768.0, 1024.0),
@@ -671,7 +721,7 @@ mod tests {
             };
             let ctx = egui::Context::default();
             crate::style::configure(&ctx);
-            for _ in 0..2 {
+            for hosting in [false, false, true, true] {
                 let input = egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
@@ -681,10 +731,14 @@ mod tests {
                 };
                 let _ = ctx.run_ui(input, |ui| {
                     egui::CentralPanel::default().show(ui, |ui| {
-                        dynadot.domains_ui(ui);
+                        if hosting {
+                            dynadot.hosting_ui(ui);
+                        } else {
+                            dynadot.domains_ui(ui);
+                        }
                         assert!(
                             ui.min_rect().right() <= width,
-                            "Domain overflow at {width}px"
+                            "List overflow at {width}px (hosting: {hosting})"
                         );
                     });
                 });
