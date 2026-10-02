@@ -985,6 +985,7 @@ impl Dashboard {
         p: Palette,
         command: &mut Option<Command>,
     ) {
+        self.github.prepare(ui.ctx());
         egui::Frame::NONE
             .stroke(Stroke::new(1.0, p.border))
             .corner_radius(10)
@@ -1022,12 +1023,23 @@ impl Dashboard {
                     .color(p.muted),
                 );
                 ui.add_space(8.0);
-                let services = services(product, p);
+                if self
+                    .github
+                    .organization_selector(ui, &product.identifier, &product.name)
+                {
+                    self.navigation = 5;
+                }
+                ui.add_space(8.0);
+                let services = services(
+                    product,
+                    p,
+                    self.github.linked_login(&product.identifier, &product.name),
+                );
                 if self.list_map || ui.available_width() < 560.0 {
                     for (i, service) in services.iter().enumerate() {
                         let (rect, _) = ui
                             .allocate_exact_size(vec2(ui.available_width(), 92.0), Sense::hover());
-                        if service_card(ui, rect, service, p, i) {
+                        if service_card(ui, rect, service, p, i, &mut self.github) {
                             service_action(service, product, ui, command);
                         }
                     }
@@ -1093,7 +1105,22 @@ impl Dashboard {
                                 Stroke::new(1.4, color),
                             ));
                         ui.painter().circle_filled(a, 3.5, color);
-                        ui.painter().circle_filled(b, 3.5, color);
+                        if services[i].github_org.is_some() {
+                            // The final tangent points from the app down into its organization.
+                            let direction = mid.normalized();
+                            let normal = vec2(-direction.y, direction.x);
+                            ui.painter().add(Shape::convex_polygon(
+                                vec![
+                                    b,
+                                    b - direction * 9.0 + normal * 4.5,
+                                    b - direction * 9.0 - normal * 4.5,
+                                ],
+                                color,
+                                Stroke::NONE,
+                            ));
+                        } else {
+                            ui.painter().circle_filled(b, 3.5, color);
+                        }
                     }
                     ui.painter().rect(
                         core,
@@ -1120,7 +1147,7 @@ impl Dashboard {
                         core.width() - 16.0,
                     );
                     for (i, rect) in positions.into_iter().enumerate() {
-                        if service_card(ui, rect, &services[i], p, i) {
+                        if service_card(ui, rect, &services[i], p, i, &mut self.github) {
                             service_action(&services[i], product, ui, command);
                         }
                     }
@@ -1191,9 +1218,10 @@ struct Service {
     detail: String,
     connected: bool,
     store: Option<Store>,
+    github_org: Option<String>,
 }
 
-fn services(product: &Product, p: Palette) -> Vec<Service> {
+fn services(product: &Product, p: Palette, github_org: Option<&str>) -> Vec<Service> {
     let mut services = Vec::new();
     for (store, title, icon, color) in [
         (Store::Apple, "App Store", Icon::Apple, p.blue),
@@ -1210,6 +1238,7 @@ fn services(product: &Product, p: Palette) -> Vec<Service> {
             detail: listing.map(|l| l.identifier.clone()).unwrap_or_default(),
             connected: listing.is_some(),
             store: Some(store),
+            github_org: None,
         });
     }
     for (title, icon, color) in [
@@ -1220,30 +1249,44 @@ fn services(product: &Product, p: Palette) -> Vec<Service> {
             Color32::from_rgb(224, 164, 81),
         ),
         ("Hosting / Backend", Icon::Server, p.blue),
-        ("Certificates", Icon::Lock, Color32::from_rgb(50, 191, 187)),
+        ("GitHub org", Icon::Users, p.blue),
         (
             "Analytics & Monetization",
             Icon::Chart,
             Color32::from_rgb(174, 123, 238),
         ),
     ] {
+        let org = (title == "GitHub org").then_some(github_org).flatten();
         services.push(Service {
             title,
             icon,
             color,
-            subtitle: "No service linked".into(),
+            subtitle: org
+                .unwrap_or(if title == "GitHub org" {
+                    "Choose an organization"
+                } else {
+                    "No service linked"
+                })
+                .into(),
             detail: String::new(),
-            connected: false,
+            connected: org.is_some(),
             store: None,
+            github_org: org.map(str::to_owned),
         });
     }
     services
 }
 
-fn service_card(ui: &Ui, rect: Rect, service: &Service, p: Palette, index: usize) -> bool {
+fn service_card(
+    ui: &Ui,
+    rect: Rect,
+    service: &Service,
+    p: Palette,
+    index: usize,
+    github: &mut crate::github::GitHub,
+) -> bool {
     let response = control(ui, rect, ("ecosystem_service", index), service.title);
-    // Only configured store connections can currently be edited.
-    let actionable = service.store.is_some();
+    let actionable = service.store.is_some() || service.github_org.is_some();
     ui.painter().rect(
         rect,
         7.0,
@@ -1280,6 +1323,9 @@ fn service_card(ui: &Ui, rect: Rect, service: &Service, p: Palette, index: usize
             p.muted
         },
     );
+    if let Some(login) = &service.github_org {
+        github.paint_org_icon(ui, icon_rect, login);
+    }
     let x = rect.left() + 55.0;
     let width = rect.width() - 65.0;
     text(
@@ -1329,7 +1375,9 @@ fn service_card(ui: &Ui, rect: Rect, service: &Service, p: Palette, index: usize
     );
     if actionable {
         response
-            .on_hover_text(if service.connected {
+            .on_hover_text(if service.github_org.is_some() {
+                "Open GitHub organization"
+            } else if service.connected {
                 "Open store listing"
             } else {
                 "Open store settings"
@@ -1341,6 +1389,12 @@ fn service_card(ui: &Ui, rect: Rect, service: &Service, p: Palette, index: usize
 }
 
 fn service_action(service: &Service, product: &Product, ui: &Ui, command: &mut Option<Command>) {
+    if let Some(login) = &service.github_org {
+        ui.ctx().open_url(egui::OpenUrl::new_tab(format!(
+            "https://github.com/{login}"
+        )));
+        return;
+    }
     if let Some(listing) = product
         .listings
         .iter()
@@ -1643,7 +1697,6 @@ enum Icon {
     Phone,
     Apple,
     Play,
-    Lock,
     Activity,
 }
 
@@ -1823,17 +1876,6 @@ impl Icon {
                     Stroke::NONE,
                 ));
             }
-            Self::Lock => {
-                rect(4., 10., 16., 12., 2.);
-                line(&[
-                    (8., 10.),
-                    (8., 5.),
-                    (10., 2.),
-                    (14., 2.),
-                    (16., 5.),
-                    (16., 10.),
-                ]);
-            }
             Self::Activity => line(&[
                 (1., 12.),
                 (7., 12.),
@@ -1849,6 +1891,84 @@ impl Icon {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ecosystem_shows_org_arrow_and_fits_map_and_list_sizes() {
+        let product = Product {
+            identifier: "com.cubacadabra.app".into(),
+            name: "cubacadabra".into(),
+            listings: Vec::new(),
+        };
+        for (width, height) in [
+            (390.0, 844.0),
+            (768.0, 1024.0),
+            (1280.0, 800.0),
+            (1440.0, 900.0),
+        ] {
+            for linked in [false, true] {
+                for list_map in [false, true] {
+                    let mut dashboard = Dashboard {
+                        github: crate::github::GitHub::test_connection(if linked {
+                            "cubacadabra"
+                        } else {
+                            "other-org"
+                        }),
+                        list_map,
+                        ..Default::default()
+                    };
+                    let mut play = PlayStore::default();
+                    let mut apple = AppleStore::default();
+                    let ctx = egui::Context::default();
+                    crate::style::configure(&ctx);
+                    for _ in 0..2 {
+                        let mut org_color = Color32::TRANSPARENT;
+                        let output = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(Rect::from_min_size(
+                                    Pos2::ZERO,
+                                    vec2(width, height),
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| {
+                                egui::CentralPanel::default().show(ui, |ui| {
+                                    let palette = Palette::new(ui);
+                                    org_color = palette.blue;
+                                    let items = services(
+                                        &product,
+                                        palette,
+                                        dashboard
+                                            .github
+                                            .linked_login(&product.identifier, &product.name),
+                                    );
+                                    assert_eq!(items.len(), 7);
+                                    assert_eq!(items[5].title, "GitHub org");
+                                    assert_eq!(items[5].connected, linked);
+                                    dashboard.ecosystem(
+                                        ui, &product, &mut play, &mut apple, palette, &mut None,
+                                    );
+                                    assert!(
+                                        ui.min_rect().right() <= width,
+                                        "Overflow at {width}px"
+                                    );
+                                });
+                            },
+                        );
+                        if !list_map && width >= 768.0 {
+                            let arrows = output.shapes.iter().filter(|shape| {
+                                matches!(&shape.shape, Shape::Path(path) if path.points.len() == 3 && path.closed && path.fill == org_color)
+                            }).count();
+                            assert_eq!(
+                                arrows,
+                                usize::from(linked),
+                                "Incorrect org arrow at {width}px"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn product_artwork_uses_selected_store_and_falls_back_to_available_icon() {

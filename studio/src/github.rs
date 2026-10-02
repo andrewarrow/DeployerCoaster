@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     process::Command,
     sync::mpsc::{self, Receiver, TryRecvError},
@@ -6,12 +7,37 @@ use std::{
     time::Duration,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::app_icons::{AppIcons, IconRequest};
 
 const API: &str = "https://api.github.com";
 const CREDENTIAL_FILE: &str = "github-token.json";
+const LINK_FILE: &str = "github-app-links.json";
+
+#[derive(Default, Serialize, Deserialize)]
+struct AppLinks(BTreeMap<String, Option<String>>);
+
+impl AppLinks {
+    fn load(path: &std::path::Path) -> Result<Self, String> {
+        match fs::read(path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|_| "Could not load app organization links.".to_owned()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(_) => Err("Could not read app organization links.".into()),
+        }
+    }
+
+    fn save(&self, path: &std::path::Path) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|_| "Could not create the settings directory.")?;
+        }
+        let bytes = serde_json::to_vec_pretty(self)
+            .map_err(|_| "Could not encode app organization links.".to_owned())?;
+        crate::storage::atomic_write(path, &bytes)
+            .map_err(|_| "Could not save app organization links.".into())
+    }
+}
 
 type OrganizationResult = Result<Vec<Organization>, String>;
 
@@ -24,6 +50,9 @@ pub(crate) struct GitHub {
     loaded: bool,
     error: Option<String>,
     token: String,
+    links: AppLinks,
+    links_loaded: bool,
+    link_error: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -81,11 +110,150 @@ impl GitHub {
         }
     }
 
-    pub(crate) fn ui(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn prepare(&mut self, ctx: &egui::Context) {
         self.poll();
-        if !self.attempted {
-            self.refresh(ui.ctx());
+        if !self.links_loaded {
+            self.links_loaded = true;
+            match crate::storage::credential_path(LINK_FILE).and_then(|path| AppLinks::load(&path))
+            {
+                Ok(links) => self.links = links,
+                Err(error) => self.link_error = Some(error),
+            }
         }
+        if !self.attempted {
+            self.refresh(ctx);
+        }
+        if self.loaded {
+            self.icons.ensure_github_started(
+                self.organizations
+                    .iter()
+                    .map(|org| IconRequest {
+                        key: org.login.clone(),
+                        artwork_url: Some(org.avatar_url.clone()),
+                    })
+                    .collect(),
+                ctx,
+            );
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_connection(login: &str) -> Self {
+        let mut icons = AppIcons::default();
+        icons.ensure_github_started(Vec::new(), &egui::Context::default());
+        Self {
+            organizations: vec![Organization {
+                login: login.into(),
+                avatar_url: String::new(),
+                description: None,
+            }],
+            icons,
+            attempted: true,
+            loaded: true,
+            links_loaded: true,
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn linked_login(&self, identifier: &str, name: &str) -> Option<&str> {
+        let login = match self.links.0.get(identifier) {
+            Some(Some(login)) => login.as_str(),
+            Some(None) => return None,
+            None => name,
+        };
+        self.organizations
+            .iter()
+            .find(|org| org.login.eq_ignore_ascii_case(login))
+            .map(|org| org.login.as_str())
+    }
+
+    pub(crate) fn paint_org_icon(&mut self, ui: &egui::Ui, rect: egui::Rect, login: &str) {
+        self.icons.paint_icon(ui, rect, login, login);
+    }
+
+    // Returns true when the connection page is requested.
+    pub(crate) fn organization_selector(
+        &mut self,
+        ui: &mut egui::Ui,
+        identifier: &str,
+        name: &str,
+    ) -> bool {
+        let previous = self.links.0.get(identifier).cloned();
+        let mut selection = previous.clone();
+        let selected_text = match &selection {
+            Some(Some(login)) => login.clone(),
+            Some(None) => "Not linked".into(),
+            None => self
+                .linked_login(identifier, name)
+                .map(|login| format!("{login} (automatic)"))
+                .unwrap_or_else(|| "Automatic (app name)".into()),
+        };
+        let mut open_connection = false;
+        ui.horizontal_wrapped(|ui| {
+            egui::ComboBox::new(("app_github_org", identifier), "GitHub org")
+                .selected_text(selected_text)
+                .width(180.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut selection, None, "Automatic (app name)");
+                    ui.selectable_value(&mut selection, Some(None), "Not linked");
+                    for org in &self.organizations {
+                        ui.selectable_value(
+                            &mut selection,
+                            Some(Some(org.login.clone())),
+                            &org.login,
+                        );
+                    }
+                });
+            if self.job.is_some() {
+                ui.spinner();
+            } else if self.error.is_some() || (self.loaded && self.organizations.is_empty()) {
+                open_connection = ui.button("GitHub connection").clicked();
+            }
+        });
+        if selection != previous {
+            match selection {
+                Some(value) => {
+                    self.links.0.insert(identifier.to_owned(), value);
+                }
+                None => {
+                    self.links.0.remove(identifier);
+                }
+            }
+            let result =
+                crate::storage::credential_path(LINK_FILE).and_then(|path| self.links.save(&path));
+            match result {
+                Ok(()) => self.link_error = None,
+                Err(error) => {
+                    // Preserve the last saved choice if persistence fails.
+                    match previous {
+                        Some(value) => {
+                            self.links.0.insert(identifier.to_owned(), value);
+                        }
+                        None => {
+                            self.links.0.remove(identifier);
+                        }
+                    }
+                    self.link_error = Some(error);
+                }
+            }
+        }
+        if let Some(error) = &self.link_error {
+            ui.add(egui::Label::new(error).wrap());
+        }
+        if let Some(Some(login)) = self.links.0.get(identifier)
+            && self.loaded
+            && self.linked_login(identifier, name).is_none()
+        {
+            ui.add(
+                egui::Label::new(format!("{login} isn't visible to this GitHub connection."))
+                    .wrap(),
+            );
+        }
+        open_connection
+    }
+
+    pub(crate) fn ui(&mut self, ui: &mut egui::Ui) {
+        self.prepare(ui.ctx());
         ui.horizontal(|ui| {
             ui.heading("GitHub orgs");
             if ui
@@ -151,18 +319,6 @@ impl GitHub {
             });
         if self.loaded && self.organizations.is_empty() {
             ui.label("No organizations are visible to this GitHub connection.");
-        }
-        if self.loaded {
-            self.icons.ensure_github_started(
-                self.organizations
-                    .iter()
-                    .map(|org| IconRequest {
-                        key: org.login.clone(),
-                        artwork_url: Some(org.avatar_url.clone()),
-                    })
-                    .collect(),
-                ui.ctx(),
-            );
         }
         egui::ScrollArea::vertical()
             .id_salt("github_organizations")
@@ -275,6 +431,43 @@ mod tests {
         io::{Read, Write},
         net::TcpListener,
     };
+
+    #[test]
+    fn app_links_persist_overrides_and_explicit_unlinks_by_identifier() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("links.json");
+        let mut github = GitHub::test_connection("cubacadabra");
+        assert_eq!(
+            github.linked_login("com.cubacadabra.app", "CUBACADABRA"),
+            Some("cubacadabra")
+        );
+        assert_eq!(github.linked_login("other.app", "Unrelated app"), None);
+        github
+            .links
+            .0
+            .insert("other.app".into(), Some("cubacadabra".into()));
+        github.links.0.insert("com.cubacadabra.app".into(), None);
+        github.links.save(&path).unwrap();
+        github.links = AppLinks::load(&path).unwrap();
+        assert_eq!(
+            github.linked_login("other.app", "Unrelated app"),
+            Some("cubacadabra")
+        );
+        assert_eq!(
+            github.linked_login("com.cubacadabra.app", "cubacadabra"),
+            None
+        );
+        github.links.0.remove("com.cubacadabra.app");
+        assert_eq!(
+            github.linked_login("com.cubacadabra.app", "cubacadabra"),
+            Some("cubacadabra")
+        );
+        github
+            .links
+            .0
+            .insert("other.app".into(), Some("unavailable-org".into()));
+        assert_eq!(github.linked_login("other.app", "cubacadabra"), None);
+    }
 
     fn mock_api(responses: Vec<(u16, String)>) -> (String, thread::JoinHandle<Vec<String>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
