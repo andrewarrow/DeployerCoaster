@@ -507,7 +507,7 @@ impl PlayStore {
             }
         });
         ui.add_space(8.0);
-        ui.label("Play Console app-list URL");
+        ui.label("Play Console app-list URL (required)");
         ui.add(
             egui::TextEdit::singleline(&mut self.console_url)
                 .id_salt("console_cookie_url")
@@ -525,12 +525,16 @@ impl PlayStore {
                 .char_limit(64 * 1024),
         );
         ui.add(egui::Label::new("Cookies are used only for this sync and aren't saved.").wrap());
+        if !self.console_cookies.trim().is_empty() && self.console_url.trim().is_empty() {
+            ui.add(
+                egui::Label::new("Also paste the app-list URL from your browser's address bar.")
+                    .wrap(),
+            );
+        }
         ui.add_space(8.0);
         if ui
             .add_enabled(
-                self.console_sync.is_none()
-                    && !self.console_url.trim().is_empty()
-                    && !self.console_cookies.trim().is_empty(),
+                self.console_sync.is_none() && !self.console_cookies.trim().is_empty(),
                 egui::Button::new("Sync app icons").min_size(egui::vec2(140.0, 44.0)),
             )
             .clicked()
