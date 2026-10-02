@@ -197,6 +197,33 @@ enum Event {
     Finished,
 }
 
+#[derive(Default, Deserialize, Serialize)]
+struct ConsoleCredentials {
+    url: String,
+    cookies: String,
+}
+
+impl ConsoleCredentials {
+    fn load_from(path: &std::path::Path) -> Result<Self, String> {
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(_) => return Err("Could not read the saved Play Console URL and cookies.".into()),
+        };
+        serde_json::from_slice(&bytes).map_err(|_| {
+            "Could not load the saved Play Console URL and cookies. Paste them again.".into()
+        })
+    }
+
+    fn save(&self, path: &std::path::Path) -> Result<(), String> {
+        let bytes = serde_json::to_vec(self)
+            .map_err(|_| "Could not encode Play Console URL and cookies.".to_owned())?;
+        crate::storage::save_credentials(path, &bytes)
+    }
+}
+
 struct Job {
     events: Receiver<Event>,
     cancelled: Arc<AtomicBool>,
@@ -222,6 +249,7 @@ pub struct PlayStore {
     console_apps: Vec<crate::play_console::ConsoleApp>,
     console_sync: Option<crate::console_sync::SyncJob>,
     console_feedback: Option<String>,
+    console_credentials_error: Option<String>,
     console_url: String,
     console_cookies: String,
     cookie_help_texture: Option<(egui::Context, egui::TextureHandle)>,
@@ -323,6 +351,15 @@ impl PlayStore {
                     store.console_feedback = Some("Could not read the saved Console icons.".into())
                 }
             }
+        }
+        match crate::storage::credential_path("google-console-session.json")
+            .and_then(|path| ConsoleCredentials::load_from(&path))
+        {
+            Ok(credentials) => {
+                store.console_url = credentials.url;
+                store.console_cookies = credentials.cookies;
+            }
+            Err(error) => store.console_credentials_error = Some(error),
         }
         store
     }
@@ -508,23 +545,43 @@ impl PlayStore {
         });
         ui.add_space(8.0);
         ui.label("Play Console app-list URL (required)");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.console_url)
-                .id_salt("console_cookie_url")
-                .desired_width(ui.available_width())
-                .hint_text("https://play.google.com/console/u/0/developers/…/app-list")
-                .char_limit(2048),
-        );
+        let url_changed = ui
+            .add(
+                egui::TextEdit::singleline(&mut self.console_url)
+                    .id_salt("console_cookie_url")
+                    .desired_width(ui.available_width())
+                    .hint_text("https://play.google.com/console/u/0/developers/…/app-list")
+                    .char_limit(2048),
+            )
+            .changed();
         ui.label("document.cookie value");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.console_cookies)
-                .id_salt("console_cookie_value")
-                .desired_width(ui.available_width())
-                .password(true)
-                .hint_text("Paste the full cookie value")
-                .char_limit(64 * 1024),
-        );
-        ui.add(egui::Label::new("Cookies are used only for this sync and aren't saved.").wrap());
+        let cookies_changed = ui
+            .add(
+                egui::TextEdit::singleline(&mut self.console_cookies)
+                    .id_salt("console_cookie_value")
+                    .desired_width(ui.available_width())
+                    .password(true)
+                    .hint_text("Paste the full cookie value")
+                    .char_limit(64 * 1024),
+            )
+            .changed();
+        if url_changed || cookies_changed {
+            self.console_credentials_error =
+                crate::storage::credential_path("google-console-session.json")
+                    .and_then(|path| {
+                        ConsoleCredentials {
+                            url: self.console_url.clone(),
+                            cookies: self.console_cookies.clone(),
+                        }
+                        .save(&path)
+                    })
+                    .err()
+                    .map(|error| format!("URL and cookies could not be saved: {error}"));
+        }
+        ui.add(egui::Label::new("URL and cookies are saved locally on this device.").wrap());
+        if let Some(error) = &self.console_credentials_error {
+            ui.add(egui::Label::new(error).wrap());
+        }
         if !self.console_cookies.trim().is_empty() && self.console_url.trim().is_empty() {
             ui.add(
                 egui::Label::new("Also paste the app-list URL from your browser's address bar.")
@@ -693,7 +750,6 @@ impl PlayStore {
             self.console_sync = None;
             match result {
                 Ok(snapshot) => {
-                    self.console_cookies.clear();
                     let count = snapshot
                         .apps
                         .iter()
@@ -1026,6 +1082,52 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[test]
+    fn console_credentials_restore_replace_and_clear_saved_values() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings/console-session.json");
+        let missing = ConsoleCredentials::load_from(&path).unwrap();
+        assert!(missing.url.is_empty());
+        assert!(missing.cookies.is_empty());
+
+        let mut credentials = ConsoleCredentials {
+            url: "https://play.google.com/console/u/0/developers/123/app-list".into(),
+            cookies: "SAPISID=test-cookie; other=value".into(),
+        };
+        credentials.save(&path).unwrap();
+        let restored = ConsoleCredentials::load_from(&path).unwrap();
+        assert_eq!(restored.url, credentials.url);
+        assert_eq!(restored.cookies, credentials.cookies);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+
+        credentials.cookies = "SAPISID=replacement".into();
+        credentials.save(&path).unwrap();
+        assert_eq!(
+            ConsoleCredentials::load_from(&path).unwrap().cookies,
+            credentials.cookies
+        );
+        ConsoleCredentials::default().save(&path).unwrap();
+        let cleared = ConsoleCredentials::load_from(&path).unwrap();
+        assert!(cleared.url.is_empty());
+        assert!(cleared.cookies.is_empty());
+    }
+
+    #[test]
+    fn console_credentials_report_unreadable_and_invalid_files() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(ConsoleCredentials::load_from(directory.path()).is_err());
+        let path = directory.path().join("console-session.json");
+        fs::write(&path, b"invalid json").unwrap();
+        assert!(ConsoleCredentials::load_from(&path).is_err());
     }
 
     fn test_http() -> Client {
