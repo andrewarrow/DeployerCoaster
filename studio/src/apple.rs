@@ -38,6 +38,10 @@ pub struct AppleSettings {
     changed: bool,
     #[serde(skip)]
     saved_credentials: Option<AppleCredentials>,
+    #[serde(skip)]
+    api_key_help_texture: Option<(egui::Context, egui::TextureHandle)>,
+    #[serde(skip)]
+    show_api_key_help: bool,
 }
 
 impl AppleSettings {
@@ -90,6 +94,7 @@ impl AppleSettings {
             )
             .wrap(),
         );
+        self.api_key_help_ui(ui);
         ui.add_space(8.0);
         ui.label("Issuer ID");
         self.changed |= ui
@@ -190,6 +195,85 @@ impl AppleSettings {
                 ui.visuals().text_color()
             };
             ui.add(egui::Label::new(egui::RichText::new(message).color(color)).wrap());
+        }
+    }
+
+    fn api_key_help_ui(&mut self, ui: &mut egui::Ui) {
+        if self
+            .api_key_help_texture
+            .as_ref()
+            .is_none_or(|(ctx, _)| ctx != ui.ctx())
+        {
+            if let Ok(image) =
+                image::load_from_memory(include_bytes!("../assets/apple-api-key-help.png"))
+            {
+                let image = image.into_rgba8();
+                self.api_key_help_texture = Some((
+                    ui.ctx().clone(),
+                    ui.ctx().load_texture(
+                        "app-store-connect-api-key-help",
+                        egui::ColorImage::from_rgba_unmultiplied(
+                            [image.width() as usize, image.height() as usize],
+                            &image,
+                        ),
+                        egui::TextureOptions::LINEAR,
+                    ),
+                ));
+            }
+        }
+
+        egui::CollapsingHeader::new("Where to find these values")
+            .id_salt("apple_api_key_help")
+            .show(ui, |ui| {
+                ui.add(
+                    egui::Label::new(
+                        "In App Store Connect, open Users and Access > Integrations > Team Keys. Copy the Issuer ID shown above the key list. Create or select a key for its Key ID, and choose Download API Key to save the .p8 file. Apple only lets you download a private key once.",
+                    )
+                    .wrap(),
+                );
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new("Example only — copy the IDs from your own account.")
+                            .small()
+                            .weak(),
+                    )
+                    .wrap(),
+                );
+                if let Some((_, texture)) = &self.api_key_help_texture {
+                    ui.add_space(4.0);
+                    ui.add(
+                        egui::Image::new(texture)
+                            .max_width(ui.available_width().min(560.0))
+                            .alt_text("App Store Connect Team Keys page with arrows pointing to the Issuer ID, add key button, and Key ID column."),
+                    );
+                    if ui
+                        .add(
+                            egui::Button::new("View full size")
+                                .min_size(egui::vec2(120.0, 44.0)),
+                        )
+                        .clicked()
+                    {
+                        self.show_api_key_help = true;
+                    }
+                }
+            });
+
+        if let Some((_, texture)) = &self.api_key_help_texture {
+            egui::Window::new("App Store Connect Team Keys")
+                .open(&mut self.show_api_key_help)
+                .default_size(egui::vec2(900.0, 500.0))
+                .max_size(
+                    (ui.ctx().content_rect().size() - egui::vec2(32.0, 64.0))
+                        .max(egui::vec2(100.0, 100.0)),
+                )
+                .scroll([true, true])
+                .show(ui.ctx(), |ui| {
+                    ui.add(
+                        egui::Image::new(texture)
+                            .fit_to_original_size(1.0)
+                            .alt_text("App Store Connect Team Keys page with arrows pointing to the Issuer ID, add key button, and Key ID column."),
+                    );
+                });
         }
     }
 }
