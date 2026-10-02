@@ -425,9 +425,9 @@ impl Dashboard {
             ("Domains", Icon::Domain),
             ("Hosting", Icon::Server),
             ("GitHub orgs", Icon::Users),
+            ("Google OAuth", Icon::Shield),
             ("Analytics", Icon::Chart),
             ("Deployments", Icon::Deploy),
-            ("Google OAuth", Icon::Shield),
             ("Team", Icon::Users),
             ("Settings", Icon::Settings),
         ];
