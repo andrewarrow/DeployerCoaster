@@ -13,6 +13,7 @@ mod console_sync;
 mod dashboard;
 mod dynadot;
 mod github;
+mod google_oauth;
 #[cfg(target_os = "macos")]
 mod macos;
 mod metadata;

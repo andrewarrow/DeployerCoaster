@@ -371,7 +371,7 @@ impl Connection {
 
 // Tokenize browser-generated POSIX cURL commands as data. Never invoke a shell,
 // expand variables, read files referenced by options, or execute substitutions.
-fn curl_arguments(input: &str) -> Result<Vec<String>, String> {
+pub(crate) fn curl_arguments(input: &str) -> Result<Vec<String>, String> {
     if input.len() > 128 * 1024 {
         return Err("The cURL command is too large. Copy only the app-list request.".into());
     }

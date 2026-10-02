@@ -106,6 +106,7 @@ pub(crate) struct Dashboard {
     mobile_detail: bool,
     logo: Option<egui::TextureHandle>,
     github: crate::github::GitHub,
+    google_oauth: crate::google_oauth::GoogleOAuth,
 }
 
 #[derive(Clone, Copy)]
@@ -207,7 +208,7 @@ impl Dashboard {
                 )
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        if compact && self.mobile_detail && !matches!(self.navigation, 3..=5) {
+                        if compact && self.mobile_detail && !matches!(self.navigation, 3..=5 | 8) {
                             if ui.button("‹  My Apps").clicked() {
                                 self.mobile_detail = false;
                             }
@@ -217,6 +218,7 @@ impl Dashboard {
                                     3 => "Domains",
                                     4 => "Hosting",
                                     5 => "GitHub orgs",
+                                    8 => "Google OAuth",
                                     _ => "My Apps",
                                 })
                                 .show_ui(ui, |ui| {
@@ -224,6 +226,7 @@ impl Dashboard {
                                     ui.selectable_value(&mut self.navigation, 3, "Domains");
                                     ui.selectable_value(&mut self.navigation, 4, "Hosting");
                                     ui.selectable_value(&mut self.navigation, 5, "GitHub orgs");
+                                    ui.selectable_value(&mut self.navigation, 8, "Google OAuth");
                                 });
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -239,7 +242,7 @@ impl Dashboard {
                 });
         }
 
-        if !compact && !matches!(self.navigation, 3..=5) {
+        if !compact && !matches!(self.navigation, 3..=5 | 8) {
             egui::Panel::left("app_library")
                 .exact_size(if width < 1100.0 { 264.0 } else { 304.0 })
                 .resizable(false)
@@ -281,6 +284,8 @@ impl Dashboard {
                     }
                 } else if self.navigation == 5 {
                     self.github.ui(ui);
+                } else if self.navigation == 8 {
+                    self.google_oauth.ui(ui);
                 } else if compact && !self.mobile_detail {
                     if self.app_list(
                         ui,
@@ -422,7 +427,7 @@ impl Dashboard {
             ("GitHub orgs", Icon::Users),
             ("Analytics", Icon::Chart),
             ("Deployments", Icon::Deploy),
-            ("Monetization", Icon::Dollar),
+            ("Google OAuth", Icon::Shield),
             ("Team", Icon::Users),
             ("Settings", Icon::Settings),
         ];
@@ -482,7 +487,6 @@ impl Dashboard {
                             self.navigation = index;
                             self.tab = match index {
                                 6 => Tab::Analytics,
-                                8 => Tab::Monetization,
                                 _ => Tab::Overview,
                             };
                         }
