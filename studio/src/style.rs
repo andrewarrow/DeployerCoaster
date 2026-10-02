@@ -86,13 +86,31 @@ pub fn configure(context: &egui::Context) {
         style.spacing.interact_size.y = 32.0;
         style.visuals.text_options.font_hinting = true;
         style.visuals.text_options.subpixel_binning = false;
+        if theme == egui::Theme::Dark {
+            style.visuals.panel_fill = Color32::from_rgb(23, 25, 28);
+            style.visuals.window_fill = Color32::from_rgb(28, 30, 34);
+            style.visuals.faint_bg_color = Color32::from_rgb(31, 34, 39);
+            style.visuals.extreme_bg_color = Color32::from_rgb(19, 21, 24);
+            style.visuals.widgets.noninteractive.bg_stroke =
+                egui::Stroke::new(1.0, Color32::from_rgb(47, 51, 58));
+            style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(37, 41, 47);
+            style.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(37, 41, 47);
+            style.visuals.widgets.inactive.bg_stroke =
+                egui::Stroke::new(1.0, Color32::from_rgb(53, 58, 66));
+            style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(44, 51, 62);
+            style.visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(44, 51, 62);
+            style.visuals.widgets.active.bg_fill = Color32::from_rgb(30, 92, 176);
+            style.visuals.selection.bg_fill = Color32::from_rgb(31, 110, 235);
+            style.visuals.selection.stroke = egui::Stroke::new(1.0, Color32::WHITE);
+            style.visuals.hyperlink_color = Color32::from_rgb(81, 160, 255);
+        }
         style.visuals.override_text_color = Some(if theme == egui::Theme::Dark {
             Color32::from_gray(235)
         } else {
             Color32::from_gray(30)
         });
         style.visuals.text_edit_bg_color = Some(if theme == egui::Theme::Dark {
-            Color32::from_gray(42)
+            Color32::from_rgb(30, 33, 38)
         } else {
             Color32::WHITE
         });

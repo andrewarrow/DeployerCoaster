@@ -7,9 +7,9 @@ use std::{
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Appearance {
-    #[default]
     System,
     Light,
+    #[default]
     Dark,
 }
 
@@ -36,7 +36,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
-            appearance: Appearance::System,
+            appearance: Appearance::default(),
             show_sidebar: true,
             show_inspector: true,
             show_activity: false,

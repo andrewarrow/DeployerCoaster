@@ -112,6 +112,12 @@ impl AppIcons {
     }
 
     pub fn ui_icon(&mut self, ui: &mut Ui, key: &str, title: &str) {
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::hover());
+        self.paint_icon(ui, rect, key, title);
+    }
+
+    pub(crate) fn paint_icon(&mut self, ui: &Ui, rect: egui::Rect, key: &str, title: &str) {
         self.poll();
         let icon = self.icons.entry(key.to_owned()).or_default();
         if let Some(image) = &icon.image {
@@ -132,11 +138,9 @@ impl AppIcons {
             }
         }
         if let Some((_, texture)) = &icon.texture {
-            ui.add(
-                egui::Image::new(texture)
-                    .fit_to_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE))
-                    .corner_radius(6.0),
-            );
+            egui::Image::new(texture)
+                .corner_radius((rect.width() * 0.18).min(16.0))
+                .paint_at(ui, rect);
         } else {
             let initial = title
                 .chars()
@@ -146,14 +150,12 @@ impl AppIcons {
                 .to_string();
             let background = ui.visuals().widgets.inactive.bg_fill;
             let foreground = ui.visuals().weak_text_color();
-            let (rect, _) =
-                ui.allocate_exact_size(egui::vec2(ICON_SIZE, ICON_SIZE), egui::Sense::hover());
-            ui.painter().rect_filled(rect, 6.0, background);
+            ui.painter().rect_filled(rect, 8.0, background);
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 initial,
-                egui::FontId::proportional(20.0),
+                egui::FontId::proportional(rect.width() * 0.4),
                 foreground,
             );
         }

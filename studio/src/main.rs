@@ -9,6 +9,7 @@ mod apple;
 mod commands;
 mod console_extension;
 mod console_sync;
+mod dashboard;
 #[cfg(target_os = "macos")]
 mod macos;
 mod metadata;
@@ -63,9 +64,13 @@ impl DesktopWindow {
                 Window::default_attributes()
                     .with_title(title)
                     .with_inner_size(if kind.is_some() {
-                        LogicalSize::new(640.0, 560.0)
+                        if kind == Some(app::AppWindow::Settings) {
+                            LogicalSize::new(820.0, 620.0)
+                        } else {
+                            LogicalSize::new(640.0, 560.0)
+                        }
                     } else {
-                        LogicalSize::new(900.0, 640.0)
+                        LogicalSize::new(1440.0, 900.0)
                     })
                     .with_min_inner_size(LogicalSize::new(390.0, 360.0))
                     .with_window_icon(Some(icon))

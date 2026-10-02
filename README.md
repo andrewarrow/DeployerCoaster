@@ -1,6 +1,18 @@
 # DeployerCoaster
 desktop installed based software for developers to help with app store connect, google play store, domain registration, and hosting
 
+# Screenshots
+
+![Connector screenshot](./screenshots/connector.png)
+
+![Light screenshot](./screenshots/light.png)
+
+![More screenshot](./screenshots/more.png)
+
+![Trends screenshot](./screenshots/trends.png)
+
+# Details
+
 Run the desktop studio with `cargo run --manifest-path studio/Cargo.toml`.
 
 The empty window has a **Connect Play Store** button. It opens Google sign-in in
@@ -23,12 +35,3 @@ requires the reporting scope. The Google account must have access to the apps in
 Play Console. If the OAuth app is in testing, add the signing-in account to its
 test users. Keep the client JSON outside the repository.
 
-## Screenshots
-
-![Connector screenshot](./screenshots/connector.png)
-
-![Light screenshot](./screenshots/light.png)
-
-![More screenshot](./screenshots/more.png)
-
-![Trends screenshot](./screenshots/trends.png)

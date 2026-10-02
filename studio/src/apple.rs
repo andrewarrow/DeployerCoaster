@@ -245,6 +245,46 @@ pub struct AppleStore {
 }
 
 impl AppleStore {
+    pub(crate) fn dashboard_apps(&self) -> Vec<crate::dashboard::StoreApp> {
+        self.apps.iter().map(|app| crate::dashboard::StoreApp {
+            identifier: if app.attributes.bundle_id.is_empty() { format!("apple:{}", app.id) } else { app.attributes.bundle_id.clone() },
+            name: if app.attributes.name.is_empty() { app.id.clone() } else { app.attributes.name.clone() },
+            store_id: app.id.clone(),
+            store: crate::app_icons::Store::Apple,
+        }).collect()
+    }
+
+    pub(crate) fn dashboard_status(&self) -> crate::dashboard::StoreStatus {
+        crate::dashboard::StoreStatus {
+            connected: self.credentials.is_some(),
+            loading: self.job.is_some(),
+            error: self.error.clone(),
+        }
+    }
+
+    pub(crate) fn prepare_dashboard(&mut self, ctx: &egui::Context) {
+        self.poll();
+        if self.credentials.is_some() && !self.loaded && !self.cancelled && self.job.is_none() && self.error.is_none() {
+            self.start(ctx);
+        }
+        if self.loaded && self.job.is_none() && self.icons.needs_start() {
+            self.icons.ensure_started(crate::app_icons::Store::Apple, self.apps.iter().filter(|app| !app.attributes.bundle_id.is_empty()).map(|app| crate::app_icons::IconRequest {
+                key: app.attributes.bundle_id.clone(), artwork_url: None,
+            }).collect(), ctx);
+        }
+    }
+
+    pub(crate) fn refresh_dashboard(&mut self, ctx: &egui::Context) {
+        if self.credentials.is_some() {
+            self.icons.refresh();
+            self.start(ctx);
+        }
+    }
+
+    pub(crate) fn paint_dashboard_icon(&mut self, ui: &egui::Ui, rect: egui::Rect, key: &str, title: &str) {
+        self.icons.paint_icon(ui, rect, key, title);
+    }
+
     pub(crate) fn poll(&mut self) {
         let Some(job) = &self.job else { return };
         match job.result.try_recv() {
