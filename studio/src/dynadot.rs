@@ -438,9 +438,7 @@ impl Dynadot {
                                         !self.cloudflare_login.busy(),
                                         egui::Button::new("Login").min_size(egui::vec2(72.0, 44.0)),
                                     )
-                                    .on_hover_text(format!(
-                                        "Open private Cloudflare login for {email}"
-                                    ))
+                                    .on_hover_text(format!("Open Cloudflare login for {email}"))
                                     .clicked()
                                 {
                                     login_email = Some(email);

@@ -35,7 +35,6 @@ sha1 = "0.10"
 tempfile = "3"
 winit = "0.30"
 webbrowser = "1"
-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
@@ -52,6 +51,3 @@ opt-level = "s"
 lto = "thin"
 codegen-units = 1
 strip = true
-
-[profile.dev.package.moxcms]
-opt-level = 3
