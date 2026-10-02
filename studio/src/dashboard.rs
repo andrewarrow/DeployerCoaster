@@ -420,13 +420,9 @@ impl Dashboard {
         );
         let entries = [
             ("Overview", Icon::Home),
-            ("My Apps", Icon::Apps),
-            ("Websites", Icon::Globe),
             ("Domains", Icon::Domain),
             ("Hosting", Icon::Server),
             ("GitHub orgs", Icon::Users),
-            ("Analytics", Icon::Chart),
-            ("Deployments", Icon::Deploy),
             ("Google OAuth", Icon::Shield),
             ("Team", Icon::Users),
             ("Settings", Icon::Settings),
