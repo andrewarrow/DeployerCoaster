@@ -100,13 +100,7 @@ impl AppIcons {
         while let Some(job) = &self.job {
             match job.receiver.try_recv() {
                 Ok(icon) => {
-                    self.icons.insert(
-                        icon.key,
-                        CachedIcon {
-                            image: Some(icon.image),
-                            texture: None,
-                        },
-                    );
+                    self.insert_image(icon.key, icon.image);
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
@@ -115,6 +109,16 @@ impl AppIcons {
                 }
             }
         }
+    }
+
+    pub(crate) fn insert_image(&mut self, key: String, image: ColorImage) {
+        self.icons.insert(
+            key,
+            CachedIcon {
+                image: Some(image),
+                texture: None,
+            },
+        );
     }
 
     pub(crate) fn has_icon(&mut self, key: &str) -> bool {
@@ -303,6 +307,22 @@ pub(crate) fn validate_google_artwork_url(value: &str) -> bool {
         && url.username().is_empty()
         && url.password().is_none()
         && url.port().is_none_or(|port| port == 443)
+}
+
+pub(crate) fn google_artwork(
+    http: &Client,
+    value: &str,
+    cancelled: &AtomicBool,
+) -> Option<ColorImage> {
+    if !validate_google_artwork_url(value) {
+        return None;
+    }
+    decode_image(limited_get(
+        http,
+        Url::parse(value).ok()?,
+        MAX_IMAGE_BYTES,
+        cancelled,
+    )?)
 }
 
 fn limited_get(http: &Client, url: Url, limit: usize, cancelled: &AtomicBool) -> Option<Vec<u8>> {

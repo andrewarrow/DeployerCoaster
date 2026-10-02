@@ -2,7 +2,11 @@ use std::{
     collections::HashSet,
     path::PathBuf,
     process::Command,
-    sync::mpsc::{self, Receiver, TryRecvError},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, TryRecvError},
+    },
     thread,
     time::Duration,
 };
@@ -29,6 +33,20 @@ pub(crate) struct GoogleOAuth {
     client_error: Option<String>,
     console_curl: String,
     session_feedback: Option<String>,
+    icons: crate::app_icons::AppIcons,
+    branding_job: Option<BrandingJob>,
+    branding_attempted: bool,
+}
+
+struct BrandingJob {
+    receiver: Receiver<(String, egui::ColorImage)>,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Drop for BrandingJob {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
 }
 
 #[derive(Clone, Deserialize)]
@@ -79,6 +97,9 @@ impl GoogleOAuth {
                 match result {
                     Ok(projects) => {
                         self.projects = projects;
+                        self.branding_job = None;
+                        self.branding_attempted = false;
+                        self.icons = Default::default();
                         self.loaded = true;
                         self.error = None;
                         if self
@@ -102,6 +123,10 @@ impl GoogleOAuth {
 
     pub(crate) fn ui(&mut self, ui: &mut egui::Ui) {
         self.poll();
+        self.poll_branding();
+        if self.loaded && self.job.is_none() && !self.branding_attempted {
+            self.refresh_branding(ui.ctx());
+        }
         if !self.attempted {
             self.refresh(ui.ctx());
         }
@@ -174,18 +199,13 @@ impl GoogleOAuth {
                         continue;
                     }
                     matches += 1;
-                    let label = format!("{}\n{}", project.display_name, project.project_id);
-                    if ui
-                        .add_sized(
-                            [ui.available_width(), 52.0],
-                            egui::Button::selectable(
-                                self.selected.as_ref() == Some(&project.project_id),
-                                "",
-                            )
-                            .left_text(label)
-                            .wrap_mode(egui::TextWrapMode::Truncate),
-                        )
-                        .clicked()
+                    if project_row(
+                        ui,
+                        project,
+                        self.selected.as_ref() == Some(&project.project_id),
+                        &mut self.icons,
+                    )
+                    .clicked()
                     {
                         self.selected = Some(project.project_id.clone());
                     }
@@ -214,12 +234,16 @@ impl GoogleOAuth {
                 ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search projects…"));
                 let query = self.search.trim().to_lowercase();
                 for project in &self.projects {
-                    if project.matches(&query) {
-                        ui.selectable_value(
-                            &mut self.selected,
-                            Some(project.project_id.clone()),
-                            format!("{} ({})", project.display_name, project.project_id),
-                        );
+                    if project.matches(&query)
+                        && project_row(
+                            ui,
+                            project,
+                            self.selected.as_ref() == Some(&project.project_id),
+                            &mut self.icons,
+                        )
+                        .clicked()
+                    {
+                        self.selected = Some(project.project_id.clone());
                     }
                 }
             });
@@ -288,6 +312,9 @@ impl GoogleOAuth {
                             self.clients.clear();
                             self.client_job = None;
                             self.session_feedback = Some("Console session saved on this device.".into());
+                            self.branding_job = None;
+                            self.branding_attempted = false;
+                            self.icons = Default::default();
                             self.refresh_clients(&project, ui.ctx());
                         }
                         Err(error) => self.client_error = Some(error),
@@ -348,6 +375,91 @@ impl GoogleOAuth {
             }
         }
     }
+
+    fn refresh_branding(&mut self, ctx: &egui::Context) {
+        self.branding_attempted = true;
+        let Ok(session) = ConsoleSession::load() else {
+            return;
+        };
+        let projects = self.projects.clone();
+        let (sender, receiver) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancellation = cancelled.clone();
+        self.branding_job = Some(BrandingJob {
+            receiver,
+            cancelled,
+        });
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let Ok(http) = reqwest::blocking::Client::builder()
+                .https_only(true)
+                .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(Duration::from_secs(3))
+                .timeout(Duration::from_secs(5))
+                .build()
+            else {
+                return;
+            };
+            for project in projects {
+                if cancellation.load(Ordering::Relaxed) {
+                    break;
+                }
+                // Branding is optional: a missing logo or inaccessible brand leaves the initial.
+                let Some(image) = session
+                    .branding_url(&project)
+                    .ok()
+                    .and_then(|url| {
+                        fetch_branding_icon_url(&http, &session, &url)
+                            .ok()
+                            .flatten()
+                    })
+                    .and_then(|url| crate::app_icons::google_artwork(&http, &url, &cancellation))
+                else {
+                    continue;
+                };
+                if sender.send((project.project_id, image)).is_err() {
+                    break;
+                }
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    fn poll_branding(&mut self) {
+        while let Some(job) = &self.branding_job {
+            match job.receiver.try_recv() {
+                Ok((key, image)) => self.icons.insert_image(key, image),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.branding_job = None;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+fn project_row(
+    ui: &mut egui::Ui,
+    project: &Project,
+    selected: bool,
+    icons: &mut crate::app_icons::AppIcons,
+) -> egui::Response {
+    let icon_id = ui.make_persistent_id(("google_branding_icon", &project.project_id));
+    let label = format!("{}\n{}", project.display_name, project.project_id);
+    let response = egui::Button::new((
+        egui::Atom::custom(icon_id, egui::vec2(36.0, 36.0)),
+        label,
+        egui::Atom::grow(),
+    ))
+    .selected(selected)
+    .min_size(egui::vec2(ui.available_width(), 52.0))
+    .wrap_mode(egui::TextWrapMode::Truncate)
+    .atom_ui(ui);
+    if let Some(rect) = response.rect(icon_id) {
+        icons.paint_icon(ui, rect, &project.project_id, &project.display_name);
+    }
+    response.response
 }
 
 impl Project {
@@ -445,6 +557,28 @@ struct ConsoleSession {
 }
 
 impl ConsoleSession {
+    fn branding_url(&self, project: &Project) -> Result<reqwest::Url, String> {
+        let number = project
+            .name
+            .strip_prefix("projects/")
+            .and_then(|number| number.parse::<u64>().ok())
+            .ok_or("Invalid Google Cloud project number.")?;
+        let console_url =
+            reqwest::Url::parse(&self.url).map_err(|_| "Invalid Console request URL.")?;
+        let key = console_url
+            .query_pairs()
+            .find_map(|(name, value)| (name == "key").then_some(value.into_owned()))
+            .ok_or("The Console request is missing its API key. Reconnect.")?;
+        let mut url = reqwest::Url::parse(&format!(
+            "https://clientauthconfig.clients6.google.com/v1/brands/lookupkey/brand/{number}"
+        ))
+        .unwrap();
+        url.query_pairs_mut()
+            .append_pair("key", &key)
+            .append_pair("readMask", "iconUrl");
+        Ok(url)
+    }
+
     fn load() -> Result<Self, String> {
         let path = crate::storage::credential_path(CONSOLE_FILE)?;
         let bytes = std::fs::read(path).map_err(|_| {
@@ -556,6 +690,38 @@ impl ConsoleSession {
         }
         Ok(hashes.join(" "))
     }
+}
+
+fn fetch_branding_icon_url(
+    http: &reqwest::blocking::Client,
+    session: &ConsoleSession,
+    url: &reqwest::Url,
+) -> Result<Option<String>, String> {
+    let mut cookie_header = reqwest::header::HeaderValue::from_str(&session.cookies)
+        .map_err(|_| "Invalid Console cookies. Reconnect.")?;
+    cookie_header.set_sensitive(true);
+    let response = http
+        .get(url.clone())
+        .header("Origin", "https://console.cloud.google.com")
+        .header("Referer", "https://console.cloud.google.com/")
+        .header("X-Goog-AuthUser", &session.auth_user)
+        .header("Authorization", session.authorization()?)
+        .header(reqwest::header::COOKIE, cookie_header)
+        .send()
+        .map_err(|_| "Could not load Google Cloud branding.")?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        return Err(SESSION_ERROR.into());
+    }
+    let brand: serde_json::Value = response
+        .json()
+        .map_err(|_| "Google Cloud returned invalid branding.")?;
+    Ok(brand["iconUrl"]
+        .as_str()
+        .filter(|url| crate::app_icons::validate_google_artwork_url(url))
+        .map(str::to_owned))
 }
 
 #[derive(Deserialize)]
@@ -805,6 +971,84 @@ mod tests {
     }
 
     #[test]
+    fn branding_uses_each_project_number_and_only_accepts_google_artwork() {
+        let session = test_session(format!(
+            "https://cloudconsole-pa.clients6.google.com{CONSOLE_PATH}?key=test-key"
+        ));
+        let mut project = Project {
+            project_id: "groupicorn".into(),
+            display_name: "Groupicorn".into(),
+            name: "projects/123".into(),
+        };
+        let url = session.branding_url(&project).unwrap();
+        assert_eq!(url.host_str(), Some("clientauthconfig.clients6.google.com"));
+        assert_eq!(url.path(), "/v1/brands/lookupkey/brand/123");
+        assert!(
+            url.query_pairs()
+                .any(|(name, value)| name == "key" && value == "test-key")
+        );
+        assert!(
+            url.query_pairs()
+                .any(|(name, value)| name == "readMask" && value == "iconUrl")
+        );
+        project.name = "projects/456".into();
+        assert!(
+            session
+                .branding_url(&project)
+                .unwrap()
+                .path()
+                .ends_with("/456")
+        );
+        project.name = "projects/invalid".into();
+        assert!(session.branding_url(&project).is_err());
+        for (status, body, expected) in [
+            (
+                200,
+                r#"{"iconUrl":"https://lh3.googleusercontent.com/branding-icon"}"#,
+                Some("https://lh3.googleusercontent.com/branding-icon"),
+            ),
+            (200, r#"{}"#, None),
+            (200, r#"{"iconUrl":""}"#, None),
+            (
+                200,
+                r#"{"iconUrl":"https://googleusercontent.com.evil.test/icon"}"#,
+                None,
+            ),
+            (
+                200,
+                r#"{"iconUrl":"http://lh3.googleusercontent.com/icon"}"#,
+                None,
+            ),
+            (404, "private-provider-message", None),
+        ] {
+            let (url, server) = mock_api(vec![(status, body.into())]);
+            assert_eq!(
+                fetch_branding_icon_url(
+                    &reqwest::blocking::Client::new(),
+                    &session,
+                    &url.parse().unwrap()
+                )
+                .unwrap()
+                .as_deref(),
+                expected
+            );
+            let requests = server.join().unwrap();
+            assert!(requests[0].to_lowercase().contains("x-goog-authuser: 0"));
+        }
+        let (url, server) = mock_api(vec![(403, "private-provider-message".into())]);
+        assert_eq!(
+            fetch_branding_icon_url(
+                &reqwest::blocking::Client::new(),
+                &session,
+                &url.parse().unwrap()
+            )
+            .unwrap_err(),
+            SESSION_ERROR
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
     fn client_list_follows_pages_and_surfaces_graphql_permission_errors() {
         let client = serde_json::json!({"clientId": "test.apps.googleusercontent.com", "displayName": "Web client", "displayType": "CLIENT_TYPE_WEB_APPLICATION", "creationTime": "2026-10-02T12:00:00Z"});
         let response = |clients: serde_json::Value, next: &str| {
@@ -874,6 +1118,38 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Uses the local gcloud login and saved Console session for read-only branding and image requests"]
+    fn live_google_project_branding() {
+        let http = reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
+        let session = ConsoleSession::load().unwrap();
+        let projects = fetch_projects(&http, &access_token().unwrap(), PROJECTS_API).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut count = 0;
+        for project in &projects {
+            let url =
+                fetch_branding_icon_url(&http, &session, &session.branding_url(project).unwrap())
+                    .unwrap();
+            if project.project_id == "deployercoaster" {
+                assert!(url.is_some());
+            }
+            if let Some(url) = url {
+                let image = crate::app_icons::google_artwork(&http, &url, &cancelled).unwrap();
+                assert!(image.size[0] > 0 && image.size[1] > 0);
+                count += 1;
+            }
+        }
+        assert!(count > 0);
+        println!(
+            "Verified branding and decoded {count} logos across {} Google projects.",
+            projects.len()
+        );
+    }
+
+    #[test]
     fn projects_follow_pagination_sort_and_deduplicate() {
         let (url, server) = mock_api(vec![
             (200, r#"{"projects":[{"projectId":"zeta","displayName":"Zeta","name":"projects/1"}],"nextPageToken":"next"}"#.into()),
@@ -924,9 +1200,10 @@ mod tests {
             (1280.0, 800.0),
             (1440.0, 900.0),
         ] {
-            for state in 0..4 {
+            for state in 0..5 {
                 let mut page = GoogleOAuth {
                     attempted: true,
+                    branding_attempted: true,
                     loaded: state > 0,
                     error: (state == 0).then(|| {
                         "Sign in to Google Cloud with gcloud auth login, then refresh projects."
@@ -941,7 +1218,7 @@ mod tests {
                         name: "projects/123456789012".into(),
                     });
                 }
-                if state == 3 {
+                if state >= 3 {
                     page.selected = Some(page.projects[0].project_id.clone());
                     page.client_project = page.selected.clone();
                     page.clients = vec![OAuthClient {
@@ -952,6 +1229,12 @@ mod tests {
                         display_type: "CLIENT_TYPE_WEB_APPLICATION".into(),
                         creation_time: "2026-10-02T12:00:00Z".into(),
                     }];
+                }
+                if state == 4 {
+                    page.icons.insert_image(
+                        page.projects[0].project_id.clone(),
+                        egui::ColorImage::filled([2, 2], egui::Color32::WHITE),
+                    );
                 }
                 let ctx = egui::Context::default();
                 crate::style::configure(&ctx);
