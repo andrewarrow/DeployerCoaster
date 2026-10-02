@@ -37,7 +37,6 @@ use serde::{Deserialize, Serialize};
 const PUBLISHER_SCOPE: &str = "https://www.googleapis.com/auth/androidpublisher";
 const REPORTING_SCOPE: &str = "https://www.googleapis.com/auth/playdeveloperreporting";
 const APPS_URL: &str = "https://playdeveloperreporting.googleapis.com/v1beta1/apps:search";
-const CLIENT_FILENAME: &str = "client_secret_apps.googleusercontent.com.json";
 const CALLBACK_PATH: &str = "/oauth/callback";
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -54,7 +53,7 @@ struct Credentials {
 impl Credentials {
     fn load() -> Result<Self, String> {
         let path = credentials_path().ok_or(
-            "Could not find the Google OAuth desktop client. Set DEPLOYERCOASTER_GOOGLE_CLIENT_SECRET to its JSON file.",
+            "Set GOOGLE_CLIENT_SECRET in .env or the environment to the Google OAuth desktop client JSON file path.",
         )?;
         let bytes = fs::read(&path).map_err(|_| {
             format!(
@@ -83,14 +82,9 @@ impl Credentials {
 }
 
 fn credentials_path() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("DEPLOYERCOASTER_GOOGLE_CLIENT_SECRET") {
-        return Some(path.into());
-    }
-    let configured =
-        dirs::config_dir().map(|root| root.join("DeployerCoaster").join("google-oauth.json"));
-    configured
-        .filter(|path| path.is_file())
-        .or_else(|| dirs::download_dir().map(|root| root.join(CLIENT_FILENAME)))
+    std::env::var_os("GOOGLE_CLIENT_SECRET")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
 }
 
 fn oauth_client(credentials: &Credentials) -> GoogleClient {

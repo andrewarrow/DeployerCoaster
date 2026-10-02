@@ -440,6 +440,13 @@ fn push_shortcut(input: &mut egui_winit::State, key: egui::Key, shift: bool) {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // Load runtime configuration before logging or any worker threads start.
+    // Values already supplied by the environment take precedence over .env.
+    match dotenvy::dotenv() {
+        Ok(_) => {}
+        Err(error) if error.not_found() => {}
+        Err(_) => return Err("Could not load .env. Check its permissions and syntax.".into()),
+    }
     env_logger::init();
     let mut builder = EventLoop::<Instant>::with_user_event();
     #[cfg(target_os = "macos")]
