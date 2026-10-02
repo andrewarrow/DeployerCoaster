@@ -13,8 +13,8 @@ use crate::{
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum SettingsSection {
-    General,
     #[default]
+    General,
     Android,
     Apple,
 }
@@ -33,6 +33,7 @@ impl SettingsSection {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppWindow {
+    Settings,
     Android,
     Apple,
 }
@@ -40,6 +41,7 @@ pub enum AppWindow {
 impl AppWindow {
     pub fn title(self) -> &'static str {
         match self {
+            Self::Settings => "Settings",
             Self::Android => "Android",
             Self::Apple => "Apple",
         }
@@ -52,7 +54,7 @@ pub struct App {
     workspace: Option<Workspace>,
     pending_action: Option<PendingAction>,
     quit: bool,
-    show_settings: bool,
+    dashboard: crate::dashboard::Dashboard,
     settings_section: SettingsSection,
     show_about: bool,
     status: Option<String>,
@@ -80,7 +82,7 @@ impl App {
             workspace: None,
             pending_action: None,
             quit: false,
-            show_settings: false,
+            dashboard: crate::dashboard::Dashboard::default(),
             settings_section: SettingsSection::default(),
             show_about: false,
             status_is_error: preference_error.is_some(),
@@ -106,7 +108,6 @@ impl App {
         if self.pending_action.is_none() {
             self.keyboard_shortcuts(&ctx);
         }
-        let narrow_layout = ui.available_width() < 800.0;
 
         let mut selected_command = None;
         #[cfg(not(target_os = "macos"))]
@@ -190,130 +191,74 @@ impl App {
             });
         });
 
-        if self.preferences.show_activity && (self.workspace.is_some() || self.status.is_some()) {
-            egui::Panel::bottom("activity_panel")
-                .show_separator_line(false)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(self.status.as_deref().unwrap_or("Ready"));
-                    });
-                });
+        if self.preferences.show_activity && self.status.is_some() {
+            egui::Panel::bottom("activity_panel").show(ui, |ui| {
+                ui.label(self.status.as_deref().unwrap_or("Ready"));
+            });
         }
-
-        if !narrow_layout
-            && self.preferences.show_sidebar
-            && self.workspace.is_some()
-            && !self.preferences.recent_workspaces.is_empty()
-        {
-            egui::Panel::left("recent_workspaces")
-                .default_size(190.0)
+        if let Some(workspace) = &mut self.workspace {
+            egui::Panel::top("open_workspace")
+                .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(16, 8)))
                 .show(ui, |ui| {
-                    ui.heading("Recent workspaces");
-                    ui.add_space(4.0);
-                    for path in self.preferences.recent_workspaces.clone() {
-                        let label = path
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or_else(|| path.to_str().unwrap_or("Workspace"));
-                        if ui
-                            .add(egui::Button::new(label).truncate())
-                            .on_hover_text(path.display().to_string())
-                            .clicked()
-                        {
-                            selected_command = Some(Command::OpenPath(path));
-                        }
-                    }
-                });
-        }
-
-        if !narrow_layout && self.preferences.show_inspector && self.workspace.is_some() {
-            egui::Panel::right("workspace_details")
-                .default_size(220.0)
-                .show(ui, |ui| {
-                    ui.heading("Workspace details");
-                    if let Some(workspace) = &self.workspace {
-                        ui.label("Path");
-                        ui.label(
-                            workspace
-                                .path
-                                .as_deref()
-                                .map(|path| path.display().to_string())
-                                .unwrap_or_else(|| "Not saved".to_owned()),
-                        );
-                        ui.add_space(8.0);
-                        ui.label("Format");
-                        ui.label(format!(".{}", WORKSPACE_EXTENSION));
-                        ui.add_space(8.0);
-                        ui.label("State");
-                        ui.label(if workspace.is_dirty() {
-                            "Unsaved changes"
-                        } else {
-                            "Saved"
-                        });
-                    }
-                });
-        }
-
-        egui::CentralPanel::default_margins().show(ui, |ui| {
-            if let Some(workspace) = &mut self.workspace {
-                if ui.available_width() < 440.0 {
-                    ui.label("Workspace name");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut workspace.document.name)
-                            .desired_width(ui.available_width().min(260.0))
-                            .hint_text("Workspace name"),
-                    );
-                } else {
-                    ui.horizontal(|ui| {
-                        ui.label("Workspace name");
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Workspace");
                         ui.add(
                             egui::TextEdit::singleline(&mut workspace.document.name)
-                                .desired_width(ui.available_width().min(260.0))
+                                .desired_width(200.0)
                                 .hint_text("Workspace name"),
                         );
+                        if workspace.is_dirty() {
+                            ui.weak("Unsaved changes");
+                        }
+                        if self.preferences.show_inspector {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(
+                                        workspace
+                                            .path
+                                            .as_deref()
+                                            .map(|path| path.display().to_string())
+                                            .unwrap_or_else(|| "Not saved".into()),
+                                    )
+                                    .small()
+                                    .weak(),
+                                )
+                                .truncate(),
+                            );
+                        }
                     });
-                }
-                if narrow_layout {
-                    ui.add_space(8.0);
-                    ui.label("Path");
-                    ui.label(
-                        workspace
-                            .path
-                            .as_deref()
-                            .map(|path| path.display().to_string())
-                            .unwrap_or_else(|| "Not saved".to_owned()),
-                    );
-                    ui.add_space(8.0);
-                    ui.label("State");
-                    ui.label(if workspace.is_dirty() {
-                        "Unsaved changes"
-                    } else {
-                        "Saved"
+                });
+        }
+        self.play_store.prepare_dashboard(&ctx);
+        self.apple_store.prepare_dashboard(&ctx);
+        if let Some(command) = self.dashboard.ui(
+            ui,
+            &mut self.play_store,
+            &mut self.apple_store,
+            self.preferences.show_sidebar,
+        ) {
+            selected_command = Some(command);
+        }
+        if let Some(status) = &self.status
+            && (self.status_is_error || !self.preferences.show_activity)
+        {
+            egui::Area::new(egui::Id::new("workspace_status"))
+                .anchor(egui::Align2::RIGHT_BOTTOM, [-16.0, -16.0])
+                .show(&ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.set_max_width(320.0);
+                        if self.status_is_error {
+                            ui.colored_label(ui.visuals().error_fg_color, status);
+                        } else {
+                            ui.label(status);
+                        }
                     });
-                } else if !self.preferences.show_inspector && workspace.is_dirty() {
-                    ui.add_space(8.0);
-                    ui.label("Unsaved changes");
-                }
-            } else {
-                self.store_settings(ui);
-            }
-
-            if let Some(status) = &self.status
-                && (self.status_is_error || !self.preferences.show_activity)
-            {
-                ui.add_space(12.0);
-                if self.status_is_error {
-                    ui.colored_label(ui.visuals().error_fg_color, status);
-                } else {
-                    ui.weak(status);
-                }
-            }
-        });
+                });
+        }
 
         if let Some(command) = selected_command {
             self.command(command);
         }
-        self.settings_window(&ctx);
         self.about_window(&ctx);
         self.discard_modal(&ctx);
     }
@@ -328,7 +273,7 @@ impl App {
             Command::Quit => self.request_action(PendingAction::Quit),
             Command::Settings => {
                 self.settings_section = SettingsSection::General;
-                self.show_settings = self.workspace.is_some();
+                self.requested_app_windows.push(AppWindow::Settings);
             }
             Command::Android => self.requested_app_windows.push(AppWindow::Android),
             Command::Apple => self.requested_app_windows.push(AppWindow::Apple),
@@ -373,9 +318,13 @@ impl App {
         }
     }
 
-    /// Returns true when the Settings window should be brought to the front.
+    /// Returns true when the main window should be focused before opening Settings.
     pub fn app_window_ui(&mut self, window: AppWindow, ui: &mut egui::Ui) -> bool {
         ui.ctx().set_theme(self.preferences.appearance.theme());
+        if window == AppWindow::Settings {
+            self.store_settings(ui);
+            return false;
+        }
         let mut settings = false;
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.inner_margin(egui::Margin::same(16)))
@@ -385,10 +334,11 @@ impl App {
                     self.apple_store.set_credentials(self.apple.credentials());
                     settings = self.apple_store.apps_ui(ui);
                 }
+                AppWindow::Settings => unreachable!(),
             });
         if settings {
             self.settings_section = SettingsSection::Apple;
-            self.show_settings = self.workspace.is_some();
+            self.requested_app_windows.push(AppWindow::Settings);
         }
         settings
     }
@@ -675,19 +625,6 @@ impl App {
         }
     }
 
-    fn settings_window(&mut self, ctx: &egui::Context) {
-        if !self.show_settings {
-            return;
-        }
-        let mut open = self.show_settings;
-        egui::Window::new("Settings")
-            .open(&mut open)
-            .collapsible(false)
-            .default_size([760.0, 560.0])
-            .show(ctx, |ui| self.store_settings(ui));
-        self.show_settings = open;
-    }
-
     fn about_window(&mut self, ctx: &egui::Context) {
         if !self.show_about {
             return;
@@ -743,7 +680,7 @@ mod tests {
             workspace: Some(workspace),
             pending_action: None,
             quit: false,
-            show_settings: false,
+            dashboard: crate::dashboard::Dashboard::default(),
             settings_section: SettingsSection::default(),
             show_about: false,
             status: None,
@@ -778,7 +715,7 @@ mod tests {
                         ..Default::default()
                     };
                     let _ = ctx.run_ui(input, |ui| {
-                        app.ui(ui);
+                        app.app_window_ui(AppWindow::Settings, ui);
                         assert!(
                             ui.min_rect().right() <= width,
                             "Overflow in {} at {width}px",

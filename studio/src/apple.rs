@@ -246,12 +246,23 @@ pub struct AppleStore {
 
 impl AppleStore {
     pub(crate) fn dashboard_apps(&self) -> Vec<crate::dashboard::StoreApp> {
-        self.apps.iter().map(|app| crate::dashboard::StoreApp {
-            identifier: if app.attributes.bundle_id.is_empty() { format!("apple:{}", app.id) } else { app.attributes.bundle_id.clone() },
-            name: if app.attributes.name.is_empty() { app.id.clone() } else { app.attributes.name.clone() },
-            store_id: app.id.clone(),
-            store: crate::app_icons::Store::Apple,
-        }).collect()
+        self.apps
+            .iter()
+            .map(|app| crate::dashboard::StoreApp {
+                identifier: if app.attributes.bundle_id.is_empty() {
+                    format!("apple:{}", app.id)
+                } else {
+                    app.attributes.bundle_id.clone()
+                },
+                name: if app.attributes.name.is_empty() {
+                    app.id.clone()
+                } else {
+                    app.attributes.name.clone()
+                },
+                store_id: app.id.clone(),
+                store: crate::app_icons::Store::Apple,
+            })
+            .collect()
     }
 
     pub(crate) fn dashboard_status(&self) -> crate::dashboard::StoreStatus {
@@ -264,13 +275,27 @@ impl AppleStore {
 
     pub(crate) fn prepare_dashboard(&mut self, ctx: &egui::Context) {
         self.poll();
-        if self.credentials.is_some() && !self.loaded && !self.cancelled && self.job.is_none() && self.error.is_none() {
+        if self.credentials.is_some()
+            && !self.loaded
+            && !self.cancelled
+            && self.job.is_none()
+            && self.error.is_none()
+        {
             self.start(ctx);
         }
         if self.loaded && self.job.is_none() && self.icons.needs_start() {
-            self.icons.ensure_started(crate::app_icons::Store::Apple, self.apps.iter().filter(|app| !app.attributes.bundle_id.is_empty()).map(|app| crate::app_icons::IconRequest {
-                key: app.attributes.bundle_id.clone(), artwork_url: None,
-            }).collect(), ctx);
+            self.icons.ensure_started(
+                crate::app_icons::Store::Apple,
+                self.apps
+                    .iter()
+                    .filter(|app| !app.attributes.bundle_id.is_empty())
+                    .map(|app| crate::app_icons::IconRequest {
+                        key: app.attributes.bundle_id.clone(),
+                        artwork_url: None,
+                    })
+                    .collect(),
+                ctx,
+            );
         }
     }
 
@@ -281,7 +306,13 @@ impl AppleStore {
         }
     }
 
-    pub(crate) fn paint_dashboard_icon(&mut self, ui: &egui::Ui, rect: egui::Rect, key: &str, title: &str) {
+    pub(crate) fn paint_dashboard_icon(
+        &mut self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        key: &str,
+        title: &str,
+    ) {
         self.icons.paint_icon(ui, rect, key, title);
     }
 

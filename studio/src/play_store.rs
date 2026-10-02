@@ -226,12 +226,19 @@ pub struct PlayStore {
 
 impl PlayStore {
     pub(crate) fn dashboard_apps(&self) -> Vec<crate::dashboard::StoreApp> {
-        self.apps.iter().map(|app| crate::dashboard::StoreApp {
-            identifier: app.package_name.clone(),
-            name: if app.display_name.is_empty() { app.package_name.clone() } else { app.display_name.clone() },
-            store_id: app.package_name.clone(),
-            store: crate::app_icons::Store::Play,
-        }).collect()
+        self.apps
+            .iter()
+            .map(|app| crate::dashboard::StoreApp {
+                identifier: app.package_name.clone(),
+                name: if app.display_name.is_empty() {
+                    app.package_name.clone()
+                } else {
+                    app.display_name.clone()
+                },
+                store_id: app.package_name.clone(),
+                store: crate::app_icons::Store::Play,
+            })
+            .collect()
     }
 
     pub(crate) fn dashboard_status(&self) -> crate::dashboard::StoreStatus {
@@ -244,14 +251,30 @@ impl PlayStore {
 
     pub(crate) fn prepare_dashboard(&mut self, ctx: &egui::Context) {
         self.poll();
-        if self.session.is_some() && !self.loaded && !self.cancelled && self.job.is_none() && self.error.is_none() {
+        if self.session.is_some()
+            && !self.loaded
+            && !self.cancelled
+            && self.job.is_none()
+            && self.error.is_none()
+        {
             self.start(ctx);
         }
         if self.loaded && self.job.is_none() && self.icons.needs_start() {
-            self.icons.ensure_started(crate::app_icons::Store::Play, self.apps.iter().map(|app| crate::app_icons::IconRequest {
-                key: app.package_name.clone(),
-                artwork_url: self.console_apps.iter().find(|summary| summary.package_name == app.package_name).and_then(|summary| summary.icon_url.clone()),
-            }).collect(), ctx);
+            self.icons.ensure_started(
+                crate::app_icons::Store::Play,
+                self.apps
+                    .iter()
+                    .map(|app| crate::app_icons::IconRequest {
+                        key: app.package_name.clone(),
+                        artwork_url: self
+                            .console_apps
+                            .iter()
+                            .find(|summary| summary.package_name == app.package_name)
+                            .and_then(|summary| summary.icon_url.clone()),
+                    })
+                    .collect(),
+                ctx,
+            );
         }
     }
 
@@ -262,7 +285,13 @@ impl PlayStore {
         }
     }
 
-    pub(crate) fn paint_dashboard_icon(&mut self, ui: &egui::Ui, rect: egui::Rect, key: &str, title: &str) {
+    pub(crate) fn paint_dashboard_icon(
+        &mut self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        key: &str,
+        title: &str,
+    ) {
         self.icons.paint_icon(ui, rect, key, title);
     }
 
