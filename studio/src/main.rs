@@ -10,6 +10,7 @@ mod commands;
 mod console_cookies;
 mod console_sync;
 mod dashboard;
+mod dynadot;
 #[cfg(target_os = "macos")]
 mod macos;
 mod metadata;

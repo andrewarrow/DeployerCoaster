@@ -156,6 +156,7 @@ impl Dashboard {
         ui: &mut Ui,
         play: &mut PlayStore,
         apple: &mut AppleStore,
+        dynadot: &mut crate::dynadot::Dynadot,
         show_sidebar: bool,
     ) -> Option<Command> {
         let palette = Palette::new(ui);
@@ -205,12 +206,21 @@ impl Dashboard {
                 )
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        if compact && self.mobile_detail {
+                        if compact && self.mobile_detail && self.navigation != 3 {
                             if ui.button("‹  My Apps").clicked() {
                                 self.mobile_detail = false;
                             }
                         } else {
-                            ui.label(egui::RichText::new("DeployerCoaster").strong());
+                            egui::ComboBox::from_id_salt("compact_section")
+                                .selected_text(if self.navigation == 3 {
+                                    "Domains"
+                                } else {
+                                    "My Apps"
+                                })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.navigation, 1, "My Apps");
+                                    ui.selectable_value(&mut self.navigation, 3, "Domains");
+                                });
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
@@ -225,7 +235,7 @@ impl Dashboard {
                 });
         }
 
-        if !compact {
+        if !compact && self.navigation != 3 {
             egui::Panel::left("app_library")
                 .exact_size(if width < 1100.0 { 264.0 } else { 304.0 })
                 .resizable(false)
@@ -257,7 +267,11 @@ impl Dashboard {
                     .inner_margin(egui::Margin::same(16)),
             )
             .show(ui, |ui| {
-                if compact && !self.mobile_detail {
+                if self.navigation == 3 {
+                    if dynadot.domains_ui(ui) {
+                        command = Some(Command::DynadotSettings);
+                    }
+                } else if compact && !self.mobile_detail {
                     if self.app_list(
                         ui,
                         &apps,

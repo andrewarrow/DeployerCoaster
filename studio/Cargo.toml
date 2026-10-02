@@ -13,6 +13,10 @@ name = "studio"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
+time = "0.3"
 dirs = "6"
 egui = "0.35"
 egui-wgpu = { version = "0.35", features = ["winit"] }

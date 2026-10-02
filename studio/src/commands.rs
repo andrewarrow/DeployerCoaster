@@ -9,6 +9,7 @@ pub enum Command {
     CloseWorkspace,
     Quit,
     Settings,
+    DynadotSettings,
     Android,
     Apple,
     About,

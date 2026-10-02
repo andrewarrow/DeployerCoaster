@@ -17,16 +17,18 @@ enum SettingsSection {
     General,
     Android,
     Apple,
+    Dynadot,
 }
 
 impl SettingsSection {
-    const ALL: [Self; 3] = [Self::General, Self::Android, Self::Apple];
+    const ALL: [Self; 4] = [Self::General, Self::Android, Self::Apple, Self::Dynadot];
 
     fn label(self) -> &'static str {
         match self {
             Self::General => "General",
             Self::Android => "Android",
             Self::Apple => "Apple",
+            Self::Dynadot => "Dynadot",
         }
     }
 }
@@ -62,6 +64,7 @@ pub struct App {
     play_store: PlayStore,
     apple: crate::apple::AppleSettings,
     apple_store: crate::apple::AppleStore,
+    dynadot: crate::dynadot::Dynadot,
     requested_app_windows: Vec<AppWindow>,
 }
 
@@ -90,6 +93,7 @@ impl App {
             play_store: PlayStore::load(),
             apple: crate::apple::AppleSettings::load(),
             apple_store: crate::apple::AppleStore::default(),
+            dynadot: crate::dynadot::Dynadot::load(),
             requested_app_windows: Vec::new(),
         };
         if let Some(path) = initial_path {
@@ -99,6 +103,7 @@ impl App {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        self.dynadot.poll();
         self.play_store.poll();
         self.apple_store.set_credentials(self.apple.credentials());
         self.apple_store.poll();
@@ -235,6 +240,7 @@ impl App {
             ui,
             &mut self.play_store,
             &mut self.apple_store,
+            &mut self.dynadot,
             self.preferences.show_sidebar,
         ) {
             selected_command = Some(command);
@@ -273,6 +279,10 @@ impl App {
             Command::Quit => self.request_action(PendingAction::Quit),
             Command::Settings => {
                 self.settings_section = SettingsSection::General;
+                self.requested_app_windows.push(AppWindow::Settings);
+            }
+            Command::DynadotSettings => {
+                self.settings_section = SettingsSection::Dynadot;
                 self.requested_app_windows.push(AppWindow::Settings);
             }
             Command::Android => self.requested_app_windows.push(AppWindow::Android),
@@ -571,6 +581,7 @@ impl App {
                         ui.heading(self.settings_section.label());
                         ui.add_space(16.0);
                         match self.settings_section {
+                            SettingsSection::Dynadot => self.dynadot.settings_ui(ui),
                             SettingsSection::General => self.appearance_settings(ui),
                             SettingsSection::Android => {
                                 ui.label(egui::RichText::new("Google Play Store").strong());
@@ -690,6 +701,7 @@ mod tests {
             play_store: PlayStore::default(),
             apple: crate::apple::AppleSettings::default(),
             apple_store: crate::apple::AppleStore::default(),
+            dynadot: crate::dynadot::Dynadot::default(),
             requested_app_windows: Vec::new(),
         }
     }
