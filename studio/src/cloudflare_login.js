@@ -1,6 +1,6 @@
 // Interact only with the Cloudflare web area in the foreground browser.
 // Native keystrokes preserve the normal browser session and input behavior.
-function prepareCloudflareLogin(se, process, credentials) {
+function prepareCloudflareLogin(se, process, credentials, pause = delay) {
     function attribute(element, name) {
         try { return element.attributes.byName(name).value(); }
         catch (_) { return ''; }
@@ -35,7 +35,7 @@ function prepareCloudflareLogin(se, process, credentials) {
     }
     let selectedAnotherProfile = false;
     for (let attempt = 0; attempt < 80; attempt++) {
-        delay(0.5);
+        pause(0.5);
         if (!process.frontmost()) return 'focus';
         const area = loginArea();
         if (!area) continue;

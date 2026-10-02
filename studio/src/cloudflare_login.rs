@@ -207,11 +207,9 @@ mod tests {
                 const se = {{keystroke: (text, options) => {{
                     if (!options) typed.push([focused === email ? 'email' : 'password', text]);
                 }}}};
-                const result = prepareCloudflareLogin(se, process, ['support@example.com', 'fake"$()!password']);
+                const result = prepareCloudflareLogin(se, process, ['support@example.com', 'fake"$()!password'], () => {{}});
                 return {{result, clicks, typed}};
             }}
-            // Replace the automation delay; no real browser or OS controls are used.
-            delay = () => {{}};
             JSON.stringify([
                 scenario('https://dash.cloudflare.com/login', true, true),
                 scenario('https://dash.cloudflare.com/login?redirect=home', true, false),
