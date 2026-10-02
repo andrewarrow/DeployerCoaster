@@ -26,7 +26,7 @@ const PUBLISHER_SCOPE: &str = "https://www.googleapis.com/auth/androidpublisher"
 const REPORTING_SCOPE: &str = "https://www.googleapis.com/auth/playdeveloperreporting";
 const APPS_URL: &str = "https://playdeveloperreporting.googleapis.com/v1beta1/apps:search";
 const CLIENT_FILENAME: &str =
-    "client_secret_40330924720-un43h7i7gmclerblihu0qjh815tfchr6.apps.googleusercontent.com.json";
+    "client_secret_apps.googleusercontent.com.json";
 const CALLBACK_PATH: &str = "/oauth/callback";
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 
