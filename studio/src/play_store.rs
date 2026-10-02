@@ -252,7 +252,6 @@ pub struct PlayStore {
     console_credentials_error: Option<String>,
     console_url: String,
     console_cookies: String,
-    cookie_help_texture: Option<(egui::Context, egui::TextureHandle)>,
     show_cookie_help: bool,
 }
 
@@ -535,13 +534,10 @@ impl PlayStore {
     fn console_cookie_ui(&mut self, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("Play Console app icons").strong());
         ui.add(egui::Label::new(
-            "Open your Play Console app list, then open Developer Tools → Console and run document.cookie. Copy the entire returned value.",
+            "Open Developer Tools → Network, then reload your Play Console app list. Select the app-list page request and copy the full Cookie value from Request Headers. document.cookie omits required session cookies.",
         ).wrap());
         ui.horizontal_wrapped(|ui| {
             ui.hyperlink_to("Open Play Console", "https://play.google.com/console/");
-            if ui.button("Copy document.cookie command").clicked() {
-                ui.ctx().copy_text("document.cookie".into());
-            }
         });
         ui.add_space(8.0);
         ui.label("Play Console app-list URL (required)");
@@ -554,14 +550,14 @@ impl PlayStore {
                     .char_limit(2048),
             )
             .changed();
-        ui.label("document.cookie value");
+        ui.label("Cookie request header");
         let cookies_changed = ui
             .add(
                 egui::TextEdit::singleline(&mut self.console_cookies)
                     .id_salt("console_cookie_value")
                     .desired_width(ui.available_width())
                     .password(true)
-                    .hint_text("Paste the full cookie value")
+                    .hint_text("Paste the full Cookie request header value")
                     .char_limit(64 * 1024),
             )
             .changed();
@@ -609,61 +605,31 @@ impl PlayStore {
     }
 
     fn cookie_help_ui(&mut self, ui: &mut egui::Ui) {
-        if self
-            .cookie_help_texture
-            .as_ref()
-            .is_none_or(|(ctx, _)| ctx != ui.ctx())
-        {
-            if let Ok(image) = image::load_from_memory(include_bytes!("../assets/cookies.png")) {
-                let image = image.into_rgba8();
-                self.cookie_help_texture = Some((
-                    ui.ctx().clone(),
-                    ui.ctx().load_texture(
-                        "play-console-cookie-help",
-                        egui::ColorImage::from_rgba_unmultiplied(
-                            [image.width() as usize, image.height() as usize],
-                            &image,
-                        ),
-                        egui::TextureOptions::LINEAR,
-                    ),
-                ));
-            }
-        }
-        let Some((_, texture)) = &self.cookie_help_texture else {
-            return;
-        };
         ui.add_space(8.0);
-        let alt_text =
-            "Play Console Developer Tools showing document.cookie and its returned cookie value.";
-        if ui
-            .add(
-                egui::Image::new(texture)
-                    .max_width(ui.available_width())
-                    .alt_text(alt_text)
-                    .sense(egui::Sense::click()),
-            )
-            .on_hover_text("Click to view full size")
-            .clicked()
-        {
-            self.show_cookie_help = true;
-        }
-        if ui.button("View full-size instructions").clicked() {
+        if ui.button("How to copy the Cookie header").clicked() {
             self.show_cookie_help = true;
         }
         egui::Window::new("How to copy Play Console cookies")
             .open(&mut self.show_cookie_help)
-            .default_size(egui::vec2(720.0, 480.0))
+            .default_width(480.0)
             .max_size(
                 (ui.ctx().content_rect().size() - egui::vec2(32.0, 64.0))
                     .max(egui::vec2(100.0, 100.0)),
             )
-            .scroll([true, true])
+            .scroll([false, true])
             .show(ui.ctx(), |ui| {
-                ui.add(
-                    egui::Image::new(texture)
-                        .fit_to_original_size(1.0)
-                        .alt_text(alt_text),
-                );
+                for step in [
+                    "1. Open your Play Console app list while signed in to the correct account. Copy the URL from the address bar.",
+                    "2. Open Developer Tools → Network, then reload the page.",
+                    "3. Select the app-list document request to play.google.com (not an analytics or image request).",
+                    "4. Under Headers → Request Headers, copy the entire Cookie value and paste it into Studio.",
+                ] {
+                    ui.add(egui::Label::new(step).wrap());
+                    ui.add_space(8.0);
+                }
+                ui.add(egui::Label::new(
+                    "Use the request's Cookie header, not the response's Set-Cookie header or document.cookie. If the session expires, reload the signed-in page and copy a fresh header.",
+                ).wrap());
             });
     }
 

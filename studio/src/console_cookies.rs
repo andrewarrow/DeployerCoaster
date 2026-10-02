@@ -16,7 +16,8 @@ use sha1::{Digest, Sha1};
 const ORIGIN: &str = "https://play.google.com";
 const MAX_COOKIES: usize = 64 * 1024;
 const MAX_RESPONSE: u64 = 4 * 1024 * 1024;
-const SESSION_ERROR: &str = "Play Console could not use this session. Sign in again and copy a fresh document.cookie value.";
+const COOKIE_INPUT_ERROR: &str = "Paste the full Cookie request header from Developer Tools → Network for the Play Console app-list page.";
+const SESSION_ERROR: &str = "Play Console could not use this session. Sign in, reload the app-list page, and copy its full Cookie request header from Developer Tools → Network. document.cookie omits required session cookies.";
 
 // Session credentials stay in memory for this sync and deliberately have no Debug implementation.
 pub(crate) struct Connection {
@@ -67,6 +68,12 @@ impl Connection {
         .map_err(|_| url_error.to_owned())?;
 
         let cookies = cookies.trim();
+        // Accept either the request header's value or a copied "Cookie: …" line.
+        let cookies = cookies
+            .get(..7)
+            .filter(|prefix| prefix.eq_ignore_ascii_case("cookie:"))
+            .map(|_| cookies[7..].trim())
+            .unwrap_or(cookies);
         let cookies = cookies
             .strip_prefix('"')
             .and_then(|value| value.strip_suffix('"'))
@@ -77,7 +84,7 @@ impl Connection {
             })
             .unwrap_or(cookies);
         if cookies.is_empty() || cookies.len() > MAX_COOKIES {
-            return Err("Paste the full value returned by document.cookie.".into());
+            return Err(COOKIE_INPUT_ERROR.into());
         }
         let mut cookie_header = HeaderValue::from_str(cookies).map_err(|_| {
             "The cookie value contains invalid characters. Copy it again.".to_owned()
@@ -85,19 +92,23 @@ impl Connection {
         cookie_header.set_sensitive(true);
         let mut sapisid = None;
         let mut fallback = None;
+        let mut has_session_cookie = false;
         let mut names = HashSet::new();
         for part in cookies.split(';') {
             let (name, value) = part
                 .trim()
                 .split_once('=')
                 .filter(|(name, _)| !name.is_empty())
-                .ok_or("Paste the full value returned by document.cookie.")?;
+                .ok_or(COOKIE_INPUT_ERROR)?;
             if !names.insert(name) {
                 return Err("The cookie value contains duplicate names. Copy it again.".into());
             }
             match name {
                 "SAPISID" => sapisid = Some(value),
                 "__Secure-3PAPISID" => fallback = Some(value),
+                "SID" | "__Secure-1PSID" | "__Secure-3PSID" if !value.is_empty() => {
+                    has_session_cookie = true;
+                }
                 _ => {}
             }
         }
@@ -107,10 +118,13 @@ impl Connection {
             sapisid.is_some_and(|value| !value.is_empty()),
             fallback.is_some_and(|value| !value.is_empty())
         );
+        if !has_session_cookie {
+            return Err("These cookies are missing the browser session. Copy the full Cookie request header from Developer Tools → Network, rather than document.cookie.".into());
+        }
         let signing_cookie = sapisid
             .or(fallback)
             .filter(|value| !value.is_empty())
-            .ok_or("This cookie value is missing SAPISID. Sign in to Play Console and copy document.cookie again.")?;
+            .ok_or("This Cookie header is missing SAPISID. Sign in to Play Console, reload the app-list page, and copy its Cookie request header again.")?;
         Ok(Self {
             console_url: canonical_url,
             developer_id: developer_id.to_owned(),
@@ -197,7 +211,7 @@ impl Connection {
                 .header("X-Goog-Api-Key", api_key)
                 .header(
                     "Authorization",
-                    authorization(&self.signing_cookie, unix_seconds()?)?,
+                    authorization(&self.signing_cookie, unix_milliseconds()?)?,
                 );
             if let Some(session_id) = setup.get("27").and_then(Value::as_str) {
                 request = request.header("X-Play-Console-Session-Id", session_id);
@@ -260,15 +274,16 @@ fn numeric_id(value: &str, max_length: usize) -> bool {
         && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
-fn unix_seconds() -> Result<u64, String> {
+fn unix_milliseconds() -> Result<u128, String> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
+        .map(|duration| duration.as_millis())
         .map_err(|_| "Check your system clock before syncing Play Console.".to_owned())
 }
 
-fn authorization(cookie: &str, timestamp: u64) -> Result<HeaderValue, String> {
-    // Google's SAPISIDHASH signs "timestamp cookie origin", as verified against the HAR.
+fn authorization(cookie: &str, timestamp: u128) -> Result<HeaderValue, String> {
+    // Play Console signs "timestamp cookie origin" using milliseconds, as verified
+    // against both the appSummaries and appList:startupData requests in the HAR.
     let digest = Sha1::digest(format!("{timestamp} {cookie} {ORIGIN}").as_bytes());
     let mut header = HeaderValue::from_str(&format!("SAPISIDHASH {timestamp}_{digest:x}"))
         .map_err(|_| "Could not authenticate the Play Console request.".to_owned())?;
@@ -448,6 +463,151 @@ fn console_setup(html: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_URL: &str = "https://play.google.com/console/u/1/developers/123456/app-list";
+
+    #[test]
+    fn signs_the_millisecond_timestamp_in_the_header() {
+        // Independently computed SHA-1 of the captured format with a synthetic cookie.
+        let header = authorization("test-signing-cookie", 1790935325102).unwrap();
+        assert_eq!(
+            header.to_str().unwrap(),
+            "SAPISIDHASH 1790935325102_f668cea14c43f77854a9074999b72f11194567c0"
+        );
+        assert!(header.is_sensitive());
+    }
+
+    #[test]
+    fn accepts_full_cookie_headers_and_preserves_values() {
+        for input in [
+            "SID=test-session; SAPISID=test-signing-cookie; S=sso=one:billing=two",
+            "Cookie: SID=test-session; SAPISID=test-signing-cookie; S=sso=one:billing=two",
+            "cookie: SID=test-session; SAPISID=test-signing-cookie; S=sso=one:billing=two",
+        ] {
+            let connection = Connection::parse(TEST_URL, input).unwrap();
+            assert_eq!(connection.auth_user, "1");
+            assert_eq!(connection.signing_cookie, "test-signing-cookie");
+            assert_eq!(
+                connection.cookies.to_str().unwrap(),
+                "SID=test-session; SAPISID=test-signing-cookie; S=sso=one:billing=two"
+            );
+            assert!(connection.cookies.is_sensitive());
+        }
+    }
+
+    #[test]
+    fn incomplete_session_errors_point_to_network_headers_without_leaking_values() {
+        for input in ["SAPISID=do-not-leak", "SID=; SAPISID=do-not-leak"] {
+            let error = Connection::parse(TEST_URL, input).err().unwrap();
+            assert!(error.contains("Network"));
+            assert!(!error.contains("do-not-leak"));
+        }
+        assert!(
+            Connection::parse(
+                TEST_URL,
+                "__Secure-3PSID=test-session; __Secure-3PAPISID=test-signing-cookie"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn fetch_sends_complete_session_and_millisecond_signatures() {
+        use std::{io::Write, net::TcpListener, thread};
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let api_key = format!("AIza{}", "x".repeat(35));
+        let setup = serde_json::json!({"1": {"8": api_key, "27": "test-session-id"}});
+        let html = format!(
+            "window.serializedInitialChunks['startupData'] = {};",
+            serde_json::to_string(&setup.to_string()).unwrap()
+        );
+        let server = thread::spawn(move || {
+            for (index, body) in [
+                html,
+                r#"{"1":[{"2":"First","5":"example.first"}],"2":"next-page"}"#.into(),
+                r#"{"1":[{"2":"Second","5":"example.second"}]}"#.into(),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                }
+                let request = String::from_utf8(request).unwrap();
+                let headers = request.to_ascii_lowercase();
+                assert!(
+                    headers.contains("cookie: sid=test-session; sapisid=test-signing-cookie\r\n")
+                );
+                if index > 0 {
+                    assert!(headers.contains("x-goog-authuser: 1\r\n"));
+                    assert!(headers.contains("x-play-console-session-id: test-session-id\r\n"));
+                    assert!(headers.contains(&format!(
+                        "x-goog-api-key: {}\r\n",
+                        api_key.to_ascii_lowercase()
+                    )));
+                    let auth = request
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("authorization")
+                                .then_some(value.trim())
+                        })
+                        .unwrap();
+                    let timestamp = auth
+                        .strip_prefix("SAPISIDHASH ")
+                        .unwrap()
+                        .split_once('_')
+                        .unwrap()
+                        .0
+                        .parse::<u128>()
+                        .unwrap();
+                    assert!(timestamp.abs_diff(unix_milliseconds().unwrap()) < 5_000);
+                    assert_eq!(
+                        auth,
+                        authorization("test-signing-cookie", timestamp)
+                            .unwrap()
+                            .to_str()
+                            .unwrap()
+                    );
+                    assert!(request.contains("fetchGamingPlatform=true&pageSize=500"));
+                    assert_eq!(request.contains("pageToken=next-page"), index == 2);
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        let connection =
+            Connection::parse(TEST_URL, "SID=test-session; SAPISID=test-signing-cookie").unwrap();
+        let http = Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let snapshot = connection
+            .fetch_with_client(
+                &http,
+                &format!("{base}/startup"),
+                &format!("{base}/appSummaries"),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(snapshot.developer_id, "123456");
+        assert_eq!(snapshot.apps.len(), 2);
+        assert_eq!(snapshot.apps[1].package_name, "example.second");
+    }
 
     #[test]
     fn redirect_diagnostics_exclude_credentials_tokens_and_account_ids() {
