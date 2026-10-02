@@ -617,18 +617,6 @@ impl PlayStore {
                 {
                     self.console_sync = None;
                 }
-            } else if ui
-                .add(
-                    egui::Button::new("Sync with browser extension…")
-                        .min_size(egui::vec2(160.0, 44.0)),
-                )
-                .clicked()
-            {
-                self.console_feedback = None;
-                match crate::console_sync::SyncJob::start(ui.ctx()) {
-                    Ok(job) => self.console_sync = Some(job),
-                    Err(error) => self.console_feedback = Some(error),
-                }
             }
         });
         if let Some(message) = &self.console_feedback {

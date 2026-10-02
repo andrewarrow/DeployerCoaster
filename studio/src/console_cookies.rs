@@ -150,7 +150,7 @@ impl Connection {
             .get("8")
             .and_then(Value::as_str)
             .filter(|key| key.starts_with("AIza") && key.len() == 39)
-            .ok_or("Could not read Play Console's API configuration. Try syncing with the browser extension.")?;
+            .ok_or("Could not read Play Console's API configuration. Reload Play Console and try syncing again.")?;
         let mut apps = Vec::new();
         let mut seen_packages = HashSet::new();
         let mut seen_tokens = HashSet::new();
@@ -256,10 +256,7 @@ fn read_response(response: Response) -> Result<Vec<u8>, String> {
         .read_to_end(&mut bytes)
         .map_err(|_| "Could not read the Play Console response.".to_owned())?;
     if bytes.len() as u64 > MAX_RESPONSE {
-        return Err(
-            "The Play Console response is too large. Try syncing with the browser extension."
-                .into(),
-        );
+        return Err("The Play Console response is too large to sync.".into());
     }
     Ok(bytes)
 }
