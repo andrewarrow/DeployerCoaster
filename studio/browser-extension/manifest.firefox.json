@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Studio Play Console Bridge",
+  "version": "0.1.0",
+  "description": "Sync app icon URLs from your Play Console app list to DeployerCoaster Studio.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://play.google.com/console/*", "http://127.0.0.1/*"],
+  "background": { "scripts": ["background.js"] },
+  "browser_specific_settings": { "gecko": { "id": "studio-console-bridge@deployercoaster", "strict_min_version": "128.0" } },
+  "content_scripts": [
+    { "matches": ["https://play.google.com/console/*"], "js": ["observer.js"], "run_at": "document_start", "world": "MAIN" },
+    { "matches": ["https://play.google.com/console/*"], "js": ["content.js"], "run_at": "document_start" },
+    { "matches": ["http://127.0.0.1/studio-console-sync*"], "js": ["connect.js"], "run_at": "document_idle" }
+  ]
+}

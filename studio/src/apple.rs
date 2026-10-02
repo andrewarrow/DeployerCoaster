@@ -337,6 +337,7 @@ impl AppleStore {
                     .filter(|app| !app.attributes.bundle_id.is_empty())
                     .map(|app| crate::app_icons::IconRequest {
                         key: app.attributes.bundle_id.clone(),
+                        artwork_url: None,
                     })
                     .collect(),
                 ui.ctx(),

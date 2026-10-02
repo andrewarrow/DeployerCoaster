@@ -27,6 +27,7 @@ pub enum Store {
 #[derive(Clone)]
 pub struct IconRequest {
     pub key: String,
+    pub artwork_url: Option<String>,
 }
 
 struct DecodedIcon {
@@ -183,7 +184,12 @@ impl AppIcons {
                 }
                 let image = match store {
                     Store::Apple => apple_icon(&http, &request.key, &cancellation),
-                    Store::Play => play_icon(&http, &request.key, &cancellation),
+                    Store::Play => play_icon(
+                        &http,
+                        &request.key,
+                        request.artwork_url.as_deref(),
+                        &cancellation,
+                    ),
                 };
                 if let Some(image) = image {
                     if sender
@@ -216,7 +222,22 @@ fn apple_icon(http: &Client, bundle_id: &str, cancelled: &AtomicBool) -> Option<
     decode_image(limited_get(http, url, MAX_IMAGE_BYTES, cancelled)?)
 }
 
-fn play_icon(http: &Client, package_name: &str, cancelled: &AtomicBool) -> Option<ColorImage> {
+fn play_icon(
+    http: &Client,
+    package_name: &str,
+    artwork_url: Option<&str>,
+    cancelled: &AtomicBool,
+) -> Option<ColorImage> {
+    if let Some(url) = artwork_url.filter(|url| validate_google_artwork_url(url)) {
+        if let Some(image) = Url::parse(url)
+            .ok()
+            .and_then(|url| limited_get(http, url, MAX_IMAGE_BYTES, cancelled))
+            .and_then(decode_image)
+        {
+            return Some(image);
+        }
+    }
+
     let mut url = Url::parse("https://play.google.com/store/apps/details").ok()?;
     url.query_pairs_mut()
         .append_pair("id", package_name)
@@ -224,14 +245,26 @@ fn play_icon(http: &Client, package_name: &str, cancelled: &AtomicBool) -> Optio
         .append_pair("gl", "US");
     let page = limited_get(http, url, MAX_PAGE_BYTES, cancelled)?;
     let artwork = og_image_url(std::str::from_utf8(&page).ok()?)?;
-    let url = Url::parse(&artwork).ok()?;
-    let host = url.host_str()?;
-    if url.scheme() != "https"
-        || !(host == "googleusercontent.com" || host.ends_with(".googleusercontent.com"))
-    {
+    if !validate_google_artwork_url(&artwork) {
         return None;
     }
+    let url = Url::parse(&artwork).ok()?;
     decode_image(limited_get(http, url, MAX_IMAGE_BYTES, cancelled)?)
+}
+
+/// Accepts public Googleusercontent artwork URLs without permitting credentials or alternate ports.
+pub(crate) fn validate_google_artwork_url(value: &str) -> bool {
+    let Ok(url) = Url::parse(value) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    url.scheme() == "https"
+        && (host == "googleusercontent.com" || host.ends_with(".googleusercontent.com"))
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none_or(|port| port == 443)
 }
 
 fn limited_get(http: &Client, url: Url, limit: usize, cancelled: &AtomicBool) -> Option<Vec<u8>> {
@@ -402,6 +435,28 @@ mod tests {
             .write_to(&mut encoded, image::ImageFormat::Jpeg)
             .unwrap();
         assert_eq!(decode_image(encoded.into_inner()).unwrap().size, [128, 128]);
+    }
+
+    #[test]
+    fn accepts_only_https_googleusercontent_artwork_urls() {
+        assert!(validate_google_artwork_url(
+            "https://lh3.googleusercontent.com/a/icon=s128"
+        ));
+        assert!(validate_google_artwork_url(
+            "https://googleusercontent.com/icon?width=128"
+        ));
+        assert!(!validate_google_artwork_url(
+            "http://lh3.googleusercontent.com/icon"
+        ));
+        assert!(!validate_google_artwork_url(
+            "https://googleusercontent.com.evil.test/icon"
+        ));
+        assert!(!validate_google_artwork_url(
+            "https://user@lh3.googleusercontent.com/icon"
+        ));
+        assert!(!validate_google_artwork_url(
+            "https://lh3.googleusercontent.com:444/icon"
+        ));
     }
 
     #[test]

@@ -219,11 +219,14 @@ pub struct PlayStore {
     error: Option<String>,
     cancelled: bool,
     icons: crate::app_icons::AppIcons,
+    console_apps: Vec<crate::play_console::ConsoleApp>,
+    console_sync: Option<crate::console_sync::SyncJob>,
+    console_feedback: Option<String>,
 }
 
 impl PlayStore {
     pub fn load() -> Self {
-        match Session::load() {
+        let mut store = match Session::load() {
             Ok(session) => Self {
                 session,
                 persistence_path: crate::storage::credential_path("google-session.json").ok(),
@@ -234,7 +237,20 @@ impl PlayStore {
                 persistence_path: crate::storage::credential_path("google-session.json").ok(),
                 ..Self::default()
             },
+        };
+        if let Ok(path) = crate::storage::credential_path("google-console-icons.json") {
+            match fs::read_to_string(path) {
+                Ok(json) => match crate::play_console::parse_console_apps_json(&json) {
+                    Ok(apps) => store.console_apps = apps,
+                    Err(error) => store.console_feedback = Some(error),
+                },
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => {
+                    store.console_feedback = Some("Could not read the saved Console icons.".into())
+                }
+            }
         }
+        store
     }
 
     pub fn settings_ui(&mut self, ui: &mut egui::Ui) {
@@ -244,6 +260,8 @@ impl PlayStore {
         }
         self.connection_ui(ui, false);
         self.error_ui(ui);
+        ui.add_space(8.0);
+        self.console_ui(ui);
     }
 
     pub fn apps_ui(&mut self, ui: &mut egui::Ui) {
@@ -260,6 +278,7 @@ impl PlayStore {
         ui.add_space(8.0);
         self.connection_ui(ui, true);
         self.error_ui(ui);
+        self.console_ui(ui);
         if self.session.is_some() {
             if self.loaded
                 && self.job.is_none()
@@ -273,6 +292,11 @@ impl PlayStore {
                         .iter()
                         .map(|app| crate::app_icons::IconRequest {
                             key: app.package_name.clone(),
+                            artwork_url: self
+                                .console_apps
+                                .iter()
+                                .find(|summary| summary.package_name == app.package_name)
+                                .and_then(|summary| summary.icon_url.clone()),
                         })
                         .collect(),
                     ui.ctx(),
@@ -395,6 +419,33 @@ impl PlayStore {
         }
     }
 
+    fn console_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            if self.console_sync.is_some() {
+                ui.spinner();
+                ui.label("Waiting for Play Console…");
+                if ui
+                    .add(egui::Button::new("Cancel").min_size(egui::vec2(72.0, 44.0)))
+                    .clicked()
+                {
+                    self.console_sync = None;
+                }
+            } else if ui
+                .add(egui::Button::new("Sync Console icons…").min_size(egui::vec2(160.0, 44.0)))
+                .clicked()
+            {
+                self.console_feedback = None;
+                match crate::console_sync::SyncJob::start(ui.ctx()) {
+                    Ok(job) => self.console_sync = Some(job),
+                    Err(error) => self.console_feedback = Some(error),
+                }
+            }
+        });
+        if let Some(message) = &self.console_feedback {
+            ui.add(egui::Label::new(message).wrap());
+        }
+    }
+
     fn progress_ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             ui.spinner();
@@ -456,6 +507,33 @@ impl PlayStore {
     }
 
     pub(crate) fn poll(&mut self) {
+        if let Some(result) = self.console_sync.as_mut().and_then(|job| job.poll()) {
+            self.console_sync = None;
+            match result {
+                Ok(snapshot) => {
+                    let count = snapshot
+                        .apps
+                        .iter()
+                        .filter(|app| app.icon_url.is_some())
+                        .count();
+                    let saved = crate::storage::credential_path("google-console-icons.json")
+                        .and_then(|path| {
+                            serde_json::to_vec(&snapshot)
+                                .map_err(|_| "Could not encode Console icons.".to_owned())
+                                .and_then(|bytes| crate::storage::save_credentials(&path, &bytes))
+                        });
+                    self.console_apps = snapshot.apps;
+                    self.icons.refresh();
+                    self.console_feedback = Some(match saved {
+                        Ok(()) => format!("Synced {count} Console icons."),
+                        Err(_) => format!(
+                            "Synced {count} Console icons, but could not save them for next time."
+                        ),
+                    });
+                }
+                Err(error) => self.console_feedback = Some(error),
+            }
+        }
         while let Some(job) = &self.job {
             match job.events.try_recv() {
                 Ok(Event::Progress(message)) => self.progress = Some(message),

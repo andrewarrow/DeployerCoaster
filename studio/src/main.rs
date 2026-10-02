@@ -7,9 +7,12 @@ mod app;
 mod app_icons;
 mod apple;
 mod commands;
+mod console_extension;
+mod console_sync;
 #[cfg(target_os = "macos")]
 mod macos;
 mod metadata;
+mod play_console;
 mod play_store;
 mod preferences;
 mod storage;
