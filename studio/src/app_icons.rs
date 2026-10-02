@@ -24,6 +24,12 @@ pub enum Store {
     Play,
 }
 
+#[derive(Clone, Copy)]
+enum IconSource {
+    Store(Store),
+    GitHub,
+}
+
 #[derive(Clone)]
 pub struct IconRequest {
     pub key: String,
@@ -80,7 +86,7 @@ impl AppIcons {
         if requests.is_empty() {
             return;
         }
-        self.start(store, requests, ctx);
+        self.start(IconSource::Store(store), requests, ctx);
     }
 
     /// Invalidates the previous batch so an explicit list refresh retries missing artwork too.
@@ -166,7 +172,17 @@ impl AppIcons {
         }
     }
 
-    fn start(&mut self, store: Store, requests: Vec<IconRequest>, ctx: &Context) {
+    pub(crate) fn ensure_github_started(&mut self, requests: Vec<IconRequest>, ctx: &Context) {
+        if self.job.is_some() || self.started {
+            return;
+        }
+        self.started = true;
+        if !requests.is_empty() {
+            self.start(IconSource::GitHub, requests, ctx);
+        }
+    }
+
+    fn start(&mut self, source: IconSource, requests: Vec<IconRequest>, ctx: &Context) {
         let (sender, receiver) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
         let cancellation = cancelled.clone();
@@ -189,14 +205,29 @@ impl AppIcons {
                 if cancellation.load(Ordering::Relaxed) {
                     break;
                 }
-                let image = match store {
-                    Store::Apple => apple_icon(&http, &request.key, &cancellation),
-                    Store::Play => play_icon(
+                let image = match source {
+                    IconSource::Store(Store::Apple) => {
+                        apple_icon(&http, &request.key, &cancellation)
+                    }
+                    IconSource::Store(Store::Play) => play_icon(
                         &http,
                         &request.key,
                         request.artwork_url.as_deref(),
                         &cancellation,
                     ),
+                    IconSource::GitHub => request
+                        .artwork_url
+                        .as_deref()
+                        .and_then(|value| Url::parse(value).ok())
+                        .filter(|url| {
+                            url.scheme() == "https"
+                                && url.host_str() == Some("avatars.githubusercontent.com")
+                                && url.username().is_empty()
+                                && url.password().is_none()
+                                && url.port().is_none_or(|port| port == 443)
+                        })
+                        .and_then(|url| limited_get(&http, url, MAX_IMAGE_BYTES, &cancellation))
+                        .and_then(decode_image),
                 };
                 if let Some(image) = image {
                     if sender

@@ -105,6 +105,7 @@ pub(crate) struct Dashboard {
     list_map: bool,
     mobile_detail: bool,
     logo: Option<egui::TextureHandle>,
+    github: crate::github::GitHub,
 }
 
 #[derive(Clone, Copy)]
@@ -206,7 +207,7 @@ impl Dashboard {
                 )
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        if compact && self.mobile_detail && !matches!(self.navigation, 3 | 4) {
+                        if compact && self.mobile_detail && !matches!(self.navigation, 3..=5) {
                             if ui.button("‹  My Apps").clicked() {
                                 self.mobile_detail = false;
                             }
@@ -215,12 +216,14 @@ impl Dashboard {
                                 .selected_text(match self.navigation {
                                     3 => "Domains",
                                     4 => "Hosting",
+                                    5 => "GitHub orgs",
                                     _ => "My Apps",
                                 })
                                 .show_ui(ui, |ui| {
                                     ui.selectable_value(&mut self.navigation, 1, "My Apps");
                                     ui.selectable_value(&mut self.navigation, 3, "Domains");
                                     ui.selectable_value(&mut self.navigation, 4, "Hosting");
+                                    ui.selectable_value(&mut self.navigation, 5, "GitHub orgs");
                                 });
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -236,7 +239,7 @@ impl Dashboard {
                 });
         }
 
-        if !compact && !matches!(self.navigation, 3 | 4) {
+        if !compact && !matches!(self.navigation, 3..=5) {
             egui::Panel::left("app_library")
                 .exact_size(if width < 1100.0 { 264.0 } else { 304.0 })
                 .resizable(false)
@@ -276,6 +279,8 @@ impl Dashboard {
                     if dynadot.hosting_ui(ui) {
                         command = Some(Command::DynadotSettings);
                     }
+                } else if self.navigation == 5 {
+                    self.github.ui(ui);
                 } else if compact && !self.mobile_detail {
                     if self.app_list(
                         ui,
@@ -414,7 +419,7 @@ impl Dashboard {
             ("Websites", Icon::Globe),
             ("Domains", Icon::Domain),
             ("Hosting", Icon::Server),
-            ("Certificates", Icon::Shield),
+            ("GitHub orgs", Icon::Users),
             ("Analytics", Icon::Chart),
             ("Deployments", Icon::Deploy),
             ("Monetization", Icon::Dollar),
@@ -1163,7 +1168,6 @@ impl Dashboard {
             2 => ("Websites", "No websites are connected yet."),
             3 => ("Domains", "No domains are connected yet."),
             4 => ("Hosting", "No hosting providers are connected yet."),
-            5 => ("Certificates", "No certificates are connected yet."),
             7 => ("Deployments", "No deployment sources are connected yet."),
             _ => ("Team", "Team management isn't available yet."),
         };
