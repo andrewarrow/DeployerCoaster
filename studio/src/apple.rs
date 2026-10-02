@@ -34,8 +34,7 @@ impl AppleSettings {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Apple");
-        ui.label("App Store Connect");
+        ui.label(egui::RichText::new("App Store Connect").strong());
         ui.hyperlink_to(
             "Get your API key and IDs in App Store Connect",
             "https://appstoreconnect.apple.com/access/integrations/api",
@@ -55,6 +54,7 @@ impl AppleSettings {
                     .hint_text("Paste Issuer ID"),
             )
             .changed();
+        ui.add_space(8.0);
         ui.label("Key ID");
         self.changed |= ui
             .add(

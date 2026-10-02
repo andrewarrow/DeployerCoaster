@@ -12,6 +12,7 @@ mod metadata;
 mod play_store;
 mod preferences;
 mod storage;
+mod style;
 mod workspace;
 
 use std::{error::Error, num::NonZeroU32, sync::Arc, time::Instant};
@@ -47,7 +48,7 @@ impl Desktop {
             event_loop.create_window(
                 Window::default_attributes()
                     .with_title(self.app.title())
-                    .with_inner_size(LogicalSize::new(1100.0, 720.0))
+                    .with_inner_size(LogicalSize::new(900.0, 640.0))
                     .with_min_inner_size(LogicalSize::new(390.0, 360.0))
                     .with_window_icon(Some(icon))
                     .with_visible(false),
@@ -323,6 +324,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let proxy = event_loop.create_proxy();
     let repaint_proxy = proxy.clone();
     let context = egui::Context::default();
+    style::configure(&context);
     context.set_request_repaint_callback(move |request| {
         if request.viewport_id == ViewportId::ROOT
             && let Some(deadline) = Instant::now().checked_add(request.delay)

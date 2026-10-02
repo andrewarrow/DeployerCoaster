@@ -401,7 +401,7 @@ impl PlayStore {
         });
     }
 
-    fn poll(&mut self) {
+    pub(crate) fn poll(&mut self) {
         while let Some(job) = &self.job {
             match job.events.try_recv() {
                 Ok(Event::Progress(message)) => self.progress = Some(message),

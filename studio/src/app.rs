@@ -11,6 +11,26 @@ use crate::{
     workspace::{WORKSPACE_EXTENSION, Workspace},
 };
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum SettingsSection {
+    General,
+    #[default]
+    Android,
+    Apple,
+}
+
+impl SettingsSection {
+    const ALL: [Self; 3] = [Self::General, Self::Android, Self::Apple];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Android => "Android",
+            Self::Apple => "Apple",
+        }
+    }
+}
+
 pub struct App {
     preferences: Preferences,
     preferences_path: Option<PathBuf>,
@@ -18,6 +38,7 @@ pub struct App {
     pending_action: Option<PendingAction>,
     quit: bool,
     show_settings: bool,
+    settings_section: SettingsSection,
     show_about: bool,
     status: Option<String>,
     status_is_error: bool,
@@ -43,6 +64,7 @@ impl App {
             pending_action: None,
             quit: false,
             show_settings: false,
+            settings_section: SettingsSection::default(),
             show_about: false,
             status_is_error: preference_error.is_some(),
             status: preference_error,
@@ -56,6 +78,7 @@ impl App {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        self.play_store.poll();
         let ctx = ui.ctx().clone();
         ctx.set_theme(self.preferences.appearance.theme());
         #[cfg(not(target_os = "macos"))]
@@ -273,7 +296,10 @@ impl App {
             Command::SaveAs => self.save_as(),
             Command::CloseWorkspace => self.request_action(PendingAction::CloseWorkspace),
             Command::Quit => self.request_action(PendingAction::Quit),
-            Command::Settings => self.show_settings = true,
+            Command::Settings => {
+                self.settings_section = SettingsSection::General;
+                self.show_settings = self.workspace.is_some();
+            }
             Command::About => {
                 #[cfg(target_os = "macos")]
                 crate::macos::show_about_panel();
@@ -468,17 +494,96 @@ impl App {
     }
 
     fn store_settings(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.set_max_width(ui.available_width().min(560.0));
-            ui.heading("Settings");
-            ui.add_space(16.0);
-            ui.heading("Android");
-            ui.label("Google Play Store");
+        let narrow = ui.available_width() < 620.0;
+        if narrow {
+            ui.horizontal(|ui| {
+                ui.label("Settings");
+                egui::ComboBox::from_id_salt("settings_category")
+                    .selected_text(self.settings_section.label())
+                    .show_ui(ui, |ui| {
+                        for section in SettingsSection::ALL {
+                            ui.selectable_value(
+                                &mut self.settings_section,
+                                section,
+                                section.label(),
+                            );
+                        }
+                    });
+            });
             ui.add_space(8.0);
-            self.play_store.ui(ui);
-            ui.add_space(24.0);
-            self.apple.ui(ui);
-        });
+        } else {
+            let fill = if ui.visuals().dark_mode {
+                egui::Color32::from_gray(34)
+            } else {
+                egui::Color32::from_gray(238)
+            };
+            egui::Panel::left("settings_navigation")
+                .exact_size(184.0)
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(
+                    egui::Frame::NONE
+                        .fill(fill)
+                        .inner_margin(egui::Margin::same(12)),
+                )
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("Settings").strong());
+                    ui.add_space(8.0);
+                    for section in SettingsSection::ALL {
+                        if ui
+                            .add_sized(
+                                [ui.available_width(), 44.0],
+                                egui::Button::selectable(self.settings_section == section, "")
+                                    .left_text(section.label()),
+                            )
+                            .clicked()
+                        {
+                            self.settings_section = section;
+                        }
+                    }
+                });
+        }
+        let margin = if narrow { 8 } else { 24 };
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin::same(margin)))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt(("settings_content", self.settings_section.label()))
+                    .show(ui, |ui| {
+                        ui.set_max_width(ui.available_width().min(600.0));
+                        ui.heading(self.settings_section.label());
+                        ui.add_space(16.0);
+                        match self.settings_section {
+                            SettingsSection::General => self.appearance_settings(ui),
+                            SettingsSection::Android => {
+                                ui.label(egui::RichText::new("Google Play Store").strong());
+                                ui.add_space(8.0);
+                                self.play_store.ui(ui);
+                            }
+                            SettingsSection::Apple => self.apple.ui(ui),
+                        }
+                    });
+            });
+    }
+
+    fn appearance_settings(&mut self, ui: &mut egui::Ui) {
+        let mut appearance = self.preferences.appearance;
+        egui::ComboBox::from_label("Appearance")
+            .selected_text(match appearance {
+                Appearance::System => "System",
+                Appearance::Light => "Light",
+                Appearance::Dark => "Dark",
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut appearance, Appearance::System, "System");
+                ui.selectable_value(&mut appearance, Appearance::Light, "Light");
+                ui.selectable_value(&mut appearance, Appearance::Dark, "Dark");
+            });
+        if appearance != self.preferences.appearance {
+            self.preferences.appearance = appearance;
+            ui.ctx().set_theme(appearance.theme());
+            self.save_preferences();
+        }
     }
 
     fn settings_window(&mut self, ctx: &egui::Context) {
@@ -489,25 +594,8 @@ impl App {
         egui::Window::new("Settings")
             .open(&mut open)
             .collapsible(false)
-            .show(ctx, |ui| {
-                let mut appearance = self.preferences.appearance;
-                egui::ComboBox::from_label("Appearance")
-                    .selected_text(match appearance {
-                        Appearance::System => "System",
-                        Appearance::Light => "Light",
-                        Appearance::Dark => "Dark",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut appearance, Appearance::System, "System");
-                        ui.selectable_value(&mut appearance, Appearance::Light, "Light");
-                        ui.selectable_value(&mut appearance, Appearance::Dark, "Dark");
-                    });
-                if appearance != self.preferences.appearance {
-                    self.preferences.appearance = appearance;
-                    ctx.set_theme(appearance.theme());
-                    self.save_preferences();
-                }
-            });
+            .default_size([760.0, 560.0])
+            .show(ctx, |ui| self.store_settings(ui));
         self.show_settings = open;
     }
 
@@ -567,6 +655,7 @@ mod tests {
             pending_action: None,
             quit: false,
             show_settings: false,
+            settings_section: SettingsSection::default(),
             show_about: false,
             status: None,
             status_is_error: false,
@@ -577,29 +666,35 @@ mod tests {
 
     #[test]
     fn store_settings_fit_supported_window_sizes() {
-        for (width, height) in [
-            (390.0, 844.0),
-            (768.0, 1024.0),
-            (1280.0, 800.0),
-            (1440.0, 900.0),
-        ] {
-            let mut app = app_with_workspace(Workspace::new());
-            app.workspace = None;
-            let ctx = egui::Context::default();
-            for _ in 0..2 {
-                let input = egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(width, height),
-                    )),
-                    ..Default::default()
-                };
-                let _ = ctx.run_ui(input, |ui| {
-                    egui::CentralPanel::default_margins().show(ui, |ui| {
-                        app.store_settings(ui);
-                        assert!(ui.min_rect().right() <= width, "Overflow at {width}px");
+        for section in SettingsSection::ALL {
+            for (width, height) in [
+                (390.0, 844.0),
+                (768.0, 1024.0),
+                (1280.0, 800.0),
+                (1440.0, 900.0),
+            ] {
+                let mut app = app_with_workspace(Workspace::new());
+                app.workspace = None;
+                app.settings_section = section;
+                let ctx = egui::Context::default();
+                crate::style::configure(&ctx);
+                for _ in 0..2 {
+                    let input = egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, height),
+                        )),
+                        ..Default::default()
+                    };
+                    let _ = ctx.run_ui(input, |ui| {
+                        app.ui(ui);
+                        assert!(
+                            ui.min_rect().right() <= width,
+                            "Overflow in {} at {width}px",
+                            section.label()
+                        );
                     });
-                });
+                }
             }
         }
     }
