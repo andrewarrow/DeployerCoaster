@@ -12,11 +12,16 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAboutPanelOptionApplicationIcon, NSAboutPanelOptionApplicationName,
-    NSAboutPanelOptionApplicationVersion, NSAboutPanelOptionKey, NSAboutPanelOptionVersion,
-    NSApplication, NSApplicationActivationPolicy, NSControlStateValueOff, NSControlStateValueOn,
-    NSEventModifierFlags, NSImage, NSMenu, NSMenuItem,
+    NSAboutPanelOptionApplicationVersion, NSAboutPanelOptionCredits, NSAboutPanelOptionKey,
+    NSAboutPanelOptionVersion, NSApplication, NSApplicationActivationPolicy, NSColor,
+    NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags, NSFont,
+    NSFontAttributeName, NSForegroundColorAttributeName, NSImage, NSLinkAttributeName, NSMenu,
+    NSMenuItem, NSMutableParagraphStyle, NSParagraphStyleAttributeName, NSTextAlignment,
 };
-use objc2_foundation::{NSCopying, NSData, NSMutableDictionary, NSObject, NSString, ns_string};
+use objc2_foundation::{
+    NSCopying, NSData, NSMutableAttributedString, NSMutableDictionary, NSObject, NSRange, NSString,
+    ns_string,
+};
 use winit::event_loop::EventLoopProxy;
 
 use crate::{commands::Command, metadata};
@@ -435,8 +440,9 @@ pub(crate) fn show_about_panel() {
         return;
     };
     let name = NSString::from_str(metadata::APP_NAME);
-    let version = NSString::from_str(metadata::VERSION);
+    let version = NSString::from_str("");
     let build = NSString::from_str(metadata::GIT_SHA);
+    let credits = about_panel_credits();
     let options = NSMutableDictionary::<NSAboutPanelOptionKey, AnyObject>::new();
     // SAFETY: AppKit's exported option keys are immutable NSString constants.
     unsafe {
@@ -444,12 +450,38 @@ pub(crate) fn show_about_panel() {
         set_about_option(&options, NSAboutPanelOptionApplicationIcon, &image);
         set_about_option(&options, NSAboutPanelOptionApplicationVersion, &version);
         set_about_option(&options, NSAboutPanelOptionVersion, &build);
+        set_about_option(&options, NSAboutPanelOptionCredits, &credits);
     }
     // SAFETY: each key conforms to NSCopying and each value has the documented
     // NSString/NSImage type for the About panel options dictionary.
     unsafe {
         app.orderFrontStandardAboutPanelWithOptions(&options);
     }
+}
+
+fn about_panel_credits() -> Retained<NSMutableAttributedString> {
+    let text = NSString::from_str("Website\nGitHub");
+    let credits =
+        NSMutableAttributedString::initWithString(NSMutableAttributedString::alloc(), &text);
+    let full_range = NSRange::from(0..text.length());
+    let paragraph = NSMutableParagraphStyle::new();
+    paragraph.setAlignment(NSTextAlignment::Center);
+    paragraph.setLineSpacing(8.0);
+    let color = NSColor::linkColor();
+    let font = NSFont::systemFontOfSize(13.0);
+    // SAFETY: the attributes use AppKit's documented object types and ranges
+    // match the ASCII credit text in UTF-16 code units.
+    unsafe {
+        credits.addAttribute_value_range(NSParagraphStyleAttributeName, &paragraph, full_range);
+        credits.addAttribute_value_range(NSForegroundColorAttributeName, &color, full_range);
+        credits.addAttribute_value_range(NSFontAttributeName, &font, full_range);
+
+        let website = NSString::from_str(metadata::WEBSITE_URL);
+        credits.addAttribute_value_range(NSLinkAttributeName, &website, NSRange::from(0..7));
+        let github = NSString::from_str(metadata::GITHUB_URL);
+        credits.addAttribute_value_range(NSLinkAttributeName, &github, NSRange::from(8..14));
+    }
+    credits
 }
 
 fn set_about_option(

@@ -222,6 +222,10 @@ pub struct PlayStore {
     console_apps: Vec<crate::play_console::ConsoleApp>,
     console_sync: Option<crate::console_sync::SyncJob>,
     console_feedback: Option<String>,
+    console_url: String,
+    console_cookies: String,
+    cookie_help_texture: Option<(egui::Context, egui::TextureHandle)>,
+    show_cookie_help: bool,
 }
 
 impl PlayStore {
@@ -330,8 +334,10 @@ impl PlayStore {
         }
         self.connection_ui(ui, false);
         self.error_ui(ui);
-        ui.add_space(8.0);
+        ui.add_space(16.0);
+        self.console_cookie_ui(ui);
         self.console_ui(ui);
+        self.cookie_help_ui(ui);
     }
 
     pub fn apps_ui(&mut self, ui: &mut egui::Ui) {
@@ -489,11 +495,122 @@ impl PlayStore {
         }
     }
 
+    fn console_cookie_ui(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("Play Console app icons").strong());
+        ui.add(egui::Label::new(
+            "Open your Play Console app list, then open Developer Tools → Console and run document.cookie. Copy the entire returned value.",
+        ).wrap());
+        ui.horizontal_wrapped(|ui| {
+            ui.hyperlink_to("Open Play Console", "https://play.google.com/console/");
+            if ui.button("Copy document.cookie command").clicked() {
+                ui.ctx().copy_text("document.cookie".into());
+            }
+        });
+        ui.add_space(8.0);
+        ui.label("Play Console app-list URL");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.console_url)
+                .id_salt("console_cookie_url")
+                .desired_width(ui.available_width())
+                .hint_text("https://play.google.com/console/u/0/developers/…/app-list")
+                .char_limit(2048),
+        );
+        ui.label("document.cookie value");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.console_cookies)
+                .id_salt("console_cookie_value")
+                .desired_width(ui.available_width())
+                .password(true)
+                .hint_text("Paste the full cookie value")
+                .char_limit(64 * 1024),
+        );
+        ui.add(egui::Label::new("Cookies are used only for this sync and aren't saved.").wrap());
+        ui.add_space(8.0);
+        if ui
+            .add_enabled(
+                self.console_sync.is_none()
+                    && !self.console_url.trim().is_empty()
+                    && !self.console_cookies.trim().is_empty(),
+                egui::Button::new("Sync app icons").min_size(egui::vec2(140.0, 44.0)),
+            )
+            .clicked()
+        {
+            self.console_feedback = None;
+            match crate::console_sync::SyncJob::start_with_cookies(
+                ui.ctx(),
+                &self.console_url,
+                &self.console_cookies,
+            ) {
+                Ok(job) => self.console_sync = Some(job),
+                Err(error) => self.console_feedback = Some(error),
+            }
+        }
+    }
+
+    fn cookie_help_ui(&mut self, ui: &mut egui::Ui) {
+        if self
+            .cookie_help_texture
+            .as_ref()
+            .is_none_or(|(ctx, _)| ctx != ui.ctx())
+        {
+            if let Ok(image) = image::load_from_memory(include_bytes!("../assets/cookies.png")) {
+                let image = image.into_rgba8();
+                self.cookie_help_texture = Some((
+                    ui.ctx().clone(),
+                    ui.ctx().load_texture(
+                        "play-console-cookie-help",
+                        egui::ColorImage::from_rgba_unmultiplied(
+                            [image.width() as usize, image.height() as usize],
+                            &image,
+                        ),
+                        egui::TextureOptions::LINEAR,
+                    ),
+                ));
+            }
+        }
+        let Some((_, texture)) = &self.cookie_help_texture else {
+            return;
+        };
+        ui.add_space(8.0);
+        let alt_text =
+            "Play Console Developer Tools showing document.cookie and its returned cookie value.";
+        if ui
+            .add(
+                egui::Image::new(texture)
+                    .max_width(ui.available_width())
+                    .alt_text(alt_text)
+                    .sense(egui::Sense::click()),
+            )
+            .on_hover_text("Click to view full size")
+            .clicked()
+        {
+            self.show_cookie_help = true;
+        }
+        if ui.button("View full-size instructions").clicked() {
+            self.show_cookie_help = true;
+        }
+        egui::Window::new("How to copy Play Console cookies")
+            .open(&mut self.show_cookie_help)
+            .default_size(egui::vec2(720.0, 480.0))
+            .max_size(
+                (ui.ctx().content_rect().size() - egui::vec2(32.0, 64.0))
+                    .max(egui::vec2(100.0, 100.0)),
+            )
+            .scroll([true, true])
+            .show(ui.ctx(), |ui| {
+                ui.add(
+                    egui::Image::new(texture)
+                        .fit_to_original_size(1.0)
+                        .alt_text(alt_text),
+                );
+            });
+    }
+
     fn console_ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             if self.console_sync.is_some() {
                 ui.spinner();
-                ui.label("Waiting for Play Console…");
+                ui.label("Syncing Console icons…");
                 if ui
                     .add(egui::Button::new("Cancel").min_size(egui::vec2(72.0, 44.0)))
                     .clicked()
@@ -501,7 +618,10 @@ impl PlayStore {
                     self.console_sync = None;
                 }
             } else if ui
-                .add(egui::Button::new("Sync Console icons…").min_size(egui::vec2(160.0, 44.0)))
+                .add(
+                    egui::Button::new("Sync with browser extension…")
+                        .min_size(egui::vec2(160.0, 44.0)),
+                )
                 .clicked()
             {
                 self.console_feedback = None;
@@ -581,6 +701,7 @@ impl PlayStore {
             self.console_sync = None;
             match result {
                 Ok(snapshot) => {
+                    self.console_cookies.clear();
                     let count = snapshot
                         .apps
                         .iter()

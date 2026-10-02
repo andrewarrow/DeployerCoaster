@@ -30,6 +30,28 @@ pub(crate) struct SyncJob {
 }
 
 impl SyncJob {
+    pub(crate) fn start_with_cookies(
+        ctx: &egui::Context,
+        console_url: &str,
+        cookies: &str,
+    ) -> Result<Self, String> {
+        let connection = crate::console_cookies::Connection::parse(console_url, cookies)?;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        let (sender, receiver) = mpsc::channel();
+        let repaint_context = ctx.clone();
+        thread::spawn(move || {
+            let result = connection.fetch(&worker_cancelled);
+            let _ = sender.send(result);
+            repaint_context.request_repaint();
+        });
+        Ok(Self {
+            receiver,
+            cancelled,
+            received: false,
+        })
+    }
+
     pub(crate) fn start(ctx: &egui::Context) -> Result<Self, String> {
         let extension_root = crate::console_extension::install()?;
         let listener = TcpListener::bind(("127.0.0.1", 0))

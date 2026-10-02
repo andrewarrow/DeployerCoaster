@@ -19,10 +19,10 @@ fn main() {
             println!("cargo:rerun-if-changed={path}");
         }
     }
-    if let Some(reference) = git(&["symbolic-ref", "--quiet", "HEAD"]) {
-        if let Some(path) = git(&["rev-parse", "--git-path", &reference]) {
-            println!("cargo:rerun-if-changed={path}");
-        }
+    if let Some(reference) = git(&["symbolic-ref", "--quiet", "HEAD"])
+        && let Some(path) = git(&["rev-parse", "--git-path", &reference])
+    {
+        println!("cargo:rerun-if-changed={path}");
     }
     println!("cargo:rerun-if-env-changed=DEPLOYERCOASTER_GIT_SHA");
     let sha = env::var("DEPLOYERCOASTER_GIT_SHA")

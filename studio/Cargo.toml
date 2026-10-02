@@ -27,6 +27,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+sha1 = "0.10"
 tempfile = "3"
 winit = "0.30"
 webbrowser = "1"
@@ -35,7 +36,7 @@ webbrowser = "1"
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSApplication", "NSEvent", "NSCell", "NSImage", "NSMenu", "NSMenuItem", "NSResponder", "NSRunningApplication",
-    "NSAttributedString", "NSColor", "NSFont", "NSParagraphStyle", "NSText",
+    "NSAttributedString", "NSColor", "NSFont", "NSParagraphStyle", "NSText", "objc2-core-foundation",
 ] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSData", "NSDictionary", "NSObject", "NSString", "NSAttributedString", "NSRange",

@@ -7,6 +7,7 @@ mod app;
 mod app_icons;
 mod apple;
 mod commands;
+mod console_cookies;
 mod console_extension;
 mod console_sync;
 mod dashboard;
