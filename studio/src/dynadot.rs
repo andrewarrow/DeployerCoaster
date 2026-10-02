@@ -408,18 +408,23 @@ impl Dynadot {
             })
             .show(ui, |ui| {
                 if hosting {
+                    let email_width = ui.available_width().min(400.0);
                     egui::Grid::new("dynadot_hosting_emails")
                         .striped(true)
                         .min_row_height(36.0)
                         .show(ui, |ui| {
-                            ui.strong("Email");
+                            ui.add_sized(
+                                [email_width, 24.0],
+                                egui::Label::new(egui::RichText::new("Email").strong()).truncate(),
+                            );
                             ui.end_row();
                             for domain in &filtered {
+                                let email = format!("support@{}", domain.domain_name);
                                 ui.add_sized(
-                                    [ui.available_width(), 36.0],
-                                    egui::Label::new(format!("support@{}", domain.domain_name))
-                                        .wrap(),
-                                );
+                                    [email_width, 36.0],
+                                    egui::Label::new(&email).truncate(),
+                                )
+                                .on_hover_text(email);
                                 ui.end_row();
                             }
                         });
@@ -729,7 +734,7 @@ mod tests {
                     )),
                     ..Default::default()
                 };
-                let _ = ctx.run_ui(input, |ui| {
+                let output = ctx.run_ui(input, |ui| {
                     egui::CentralPanel::default().show(ui, |ui| {
                         if hosting {
                             dynadot.hosting_ui(ui);
@@ -742,6 +747,22 @@ mod tests {
                         );
                     });
                 });
+                if hosting {
+                    let mut emails = 0;
+                    for shape in &output.shapes {
+                        if let egui::epaint::Shape::Text(text) = &shape.shape {
+                            if text.galley.job.text.starts_with("support@") {
+                                emails += 1;
+                                assert_eq!(text.galley.rows.len(), 1, "Email wraps at {width}px");
+                                assert!(
+                                    text.galley.rect.width() > 100.0,
+                                    "Email column collapses at {width}px"
+                                );
+                            }
+                        }
+                    }
+                    assert_eq!(emails, 2);
+                }
             }
         }
     }
