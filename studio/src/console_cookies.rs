@@ -16,8 +16,9 @@ use sha1::{Digest, Sha1};
 const ORIGIN: &str = "https://play.google.com";
 const MAX_COOKIES: usize = 64 * 1024;
 const MAX_RESPONSE: u64 = 4 * 1024 * 1024;
-const COOKIE_INPUT_ERROR: &str = "Paste the full Cookie request header from Developer Tools → Network for the Play Console app-list page.";
-const SESSION_ERROR: &str = "Play Console could not use this session. Sign in, reload the app-list page, and copy its full Cookie request header from Developer Tools → Network. document.cookie omits required session cookies.";
+const COOKIE_INPUT_ERROR: &str = "The copied cookies are incomplete. Reload Play Console and copy the request as cURL from Developer Tools → Network again.";
+const SESSION_ERROR: &str = "Play Console could not use this session. Sign in, reload the app list, and copy a fresh cURL command from Developer Tools → Network.";
+const CURL_ERROR: &str = "Copy the appList:startupData or appSummaries request as cURL from Play Console's Network tab, then paste the entire command.";
 
 // Session credentials stay in memory for this sync and deliberately have no Debug implementation.
 pub(crate) struct Connection {
@@ -26,6 +27,7 @@ pub(crate) struct Connection {
     auth_user: String,
     cookies: HeaderValue,
     signing_cookie: String,
+    setup: Option<Value>,
 }
 
 impl Connection {
@@ -119,19 +121,113 @@ impl Connection {
             fallback.is_some_and(|value| !value.is_empty())
         );
         if !has_session_cookie {
-            return Err("These cookies are missing the browser session. Copy the full Cookie request header from Developer Tools → Network, rather than document.cookie.".into());
+            return Err("These cookies are missing the browser session. Reload Play Console and copy the request as cURL from Developer Tools → Network again.".into());
         }
         let signing_cookie = sapisid
             .or(fallback)
             .filter(|value| !value.is_empty())
-            .ok_or("This Cookie header is missing SAPISID. Sign in to Play Console, reload the app-list page, and copy its Cookie request header again.")?;
+            .ok_or("The copied cookies are missing SAPISID. Sign in to Play Console, reload the app list, and copy the request as cURL again.")?;
         Ok(Self {
             console_url: canonical_url,
             developer_id: developer_id.to_owned(),
             auth_user: auth_user.to_owned(),
             cookies: cookie_header,
             signing_cookie: signing_cookie.to_owned(),
+            setup: None,
         })
+    }
+
+    pub(crate) fn parse_curl(input: &str) -> Result<Self, String> {
+        let args = curl_arguments(input)?;
+        if args.first().map(String::as_str) != Some("curl") {
+            return Err(CURL_ERROR.into());
+        }
+        let mut url = None;
+        let mut headers = Vec::new();
+        let mut cookies = None;
+        let mut body = None;
+        let mut args = args.iter().skip(1);
+        while let Some(arg) = args.next() {
+            let (flag, inline) = arg
+                .split_once('=')
+                .map_or((arg.as_str(), None), |(flag, value)| (flag, Some(value)));
+            match flag {
+                "-H" | "--header" | "-b" | "--cookie" | "--url" | "-d" | "--data"
+                | "--data-raw" | "--data-binary" => {
+                    let value = inline
+                        .or_else(|| args.next().map(String::as_str))
+                        .ok_or(CURL_ERROR)?;
+                    match flag {
+                        "-H" | "--header" => headers.push(value.to_owned()),
+                        "-b" | "--cookie" => cookies = Some(value.to_owned()),
+                        "--url" => url = Some(value.to_owned()),
+                        _ => body = Some(value.to_owned()),
+                    }
+                }
+                _ if arg.starts_with("https://") => url = Some(arg.clone()),
+                _ => {}
+            }
+        }
+        let url = Url::parse(url.as_deref().ok_or(CURL_ERROR)?).map_err(|_| CURL_ERROR)?;
+        if url.scheme() != "https"
+            || url.port().is_some()
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return Err(CURL_ERROR.into());
+        }
+        // Chrome sends real headers; Firefox can encode the API headers in the URL.
+        for (_, value) in url.query_pairs().filter(|(name, _)| name == "$httpHeaders") {
+            headers.extend(value.split("\r\n").map(str::to_owned));
+        }
+        let mut auth_user = String::from("0");
+        let mut api_key = None;
+        let mut session_id = None;
+        for header in headers {
+            let Some((name, value)) = header.split_once(':') else {
+                continue;
+            };
+            let value = value.trim();
+            match name.trim().to_ascii_lowercase().as_str() {
+                "cookie" => cookies = Some(value.to_owned()),
+                "x-goog-authuser" => auth_user = value.to_owned(),
+                "x-goog-api-key" => api_key = Some(value.to_owned()),
+                "x-play-console-session-id" => session_id = Some(value.to_owned()),
+                _ => {}
+            }
+        }
+        let cookies = cookies.ok_or("This cURL command has no cookies. Reload Play Console and copy the request as cURL again.")?;
+        if url.host_str() == Some("play.google.com") {
+            return Self::parse(url.as_str(), &cookies);
+        }
+        if url.host_str() != Some("playconsoleapps-pa.clients6.google.com") {
+            return Err(CURL_ERROR.into());
+        }
+        let developer_id = if url.path() == "/v1/developers/appList:startupData" {
+            let body: Value =
+                serde_json::from_str(body.as_deref().ok_or(CURL_ERROR)?).map_err(|_| CURL_ERROR)?;
+            body.pointer("/1/1")
+                .and_then(Value::as_str)
+                .ok_or(CURL_ERROR)?
+                .to_owned()
+        } else {
+            url.path()
+                .strip_prefix("/v1/developers/")
+                .and_then(|path| path.strip_suffix("/appSummaries"))
+                .ok_or(CURL_ERROR)?
+                .to_owned()
+        };
+        if !numeric_id(&developer_id, 32) || !numeric_id(&auth_user, 10) {
+            return Err(CURL_ERROR.into());
+        }
+        let api_key = api_key.filter(|key| key.starts_with("AIza") && key.len() == 39)
+            .ok_or("This cURL command is missing the API key. Copy the appList:startupData request as cURL again.")?;
+        let mut connection = Self::parse(
+            &format!("{ORIGIN}/console/u/{auth_user}/developers/{developer_id}/app-list"),
+            &cookies,
+        )?;
+        connection.setup = Some(serde_json::json!({"8": api_key, "27": session_id}));
+        Ok(connection)
     }
 
     pub(crate) fn fetch(
@@ -160,27 +256,32 @@ impl Connection {
         cancelled: &AtomicBool,
     ) -> Result<crate::console_sync::Snapshot, String> {
         check_cancelled(cancelled)?;
-        log::debug!("Requesting Play Console startup page");
-        let response = http
-            .get(console_url)
-            .header(COOKIE, self.cookies.clone())
-            .send()
-            .map_err(|error| {
-                log::debug!(
-                    "Play Console startup request failed: {}",
-                    error.without_url()
-                );
-                "Could not reach Play Console. Check your connection and try again.".to_owned()
+        let setup = if let Some(setup) = &self.setup {
+            log::debug!("Using Play Console API configuration from copied cURL");
+            setup.clone()
+        } else {
+            log::debug!("Requesting Play Console startup page");
+            let response = http
+                .get(console_url)
+                .header(COOKIE, self.cookies.clone())
+                .send()
+                .map_err(|error| {
+                    log::debug!(
+                        "Play Console startup request failed: {}",
+                        error.without_url()
+                    );
+                    "Could not reach Play Console. Check your connection and try again.".to_owned()
+                })?;
+            let bytes = read_response(response, "startup")?;
+            check_cancelled(cancelled)?;
+            let html = std::str::from_utf8(&bytes).map_err(|_| {
+                log::debug!("Play Console startup response is not UTF-8");
+                SESSION_ERROR.to_owned()
             })?;
-        let bytes = read_response(response, "startup")?;
-        check_cancelled(cancelled)?;
-        let html = std::str::from_utf8(&bytes).map_err(|_| {
-            log::debug!("Play Console startup response is not UTF-8");
-            SESSION_ERROR.to_owned()
-        })?;
-        let setup = console_setup(html).inspect_err(|_| {
-            log::debug!("Could not decode Play Console startup configuration");
-        })?;
+            console_setup(html).inspect_err(|_| {
+                log::debug!("Could not decode Play Console startup configuration");
+            })?
+        };
         log::debug!(
             "Decoded Play Console startup configuration: API key field present={}, session ID present={}",
             setup.get("8").is_some(),
@@ -266,6 +367,63 @@ impl Connection {
             apps,
         })
     }
+}
+
+// Tokenize browser-generated POSIX cURL commands as data. Never invoke a shell,
+// expand variables, read files referenced by options, or execute substitutions.
+fn curl_arguments(input: &str) -> Result<Vec<String>, String> {
+    if input.len() > 128 * 1024 {
+        return Err("The cURL command is too large. Copy only the app-list request.".into());
+    }
+    let mut args = Vec::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut started = false;
+    let mut chars = input.chars().peekable();
+    while let Some(character) = chars.next() {
+        match (quote, character) {
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            (Some('\''), _) => word.push(character),
+            (_, '\\') => {
+                let escaped = chars.next().ok_or(CURL_ERROR)?;
+                if escaped == '\n' {
+                    continue;
+                }
+                if escaped == '\r' && chars.peek() == Some(&'\n') {
+                    chars.next();
+                    continue;
+                }
+                if quote == Some('"') && !matches!(escaped, '"' | '\\' | '$' | '`') {
+                    word.push('\\');
+                }
+                word.push(escaped);
+                started = true;
+            }
+            (None, '\'' | '"') => {
+                quote = Some(character);
+                started = true;
+            }
+            (None, _) if character.is_whitespace() => {
+                if started {
+                    args.push(std::mem::take(&mut word));
+                    started = false;
+                }
+            }
+            _ => {
+                word.push(character);
+                started = true;
+            }
+        }
+    }
+    if quote.is_some() {
+        return Err(
+            "The cURL command has an unfinished quote. Copy the entire command again.".into(),
+        );
+    }
+    if started {
+        args.push(word);
+    }
+    Ok(args)
 }
 
 fn numeric_id(value: &str, max_length: usize) -> bool {
@@ -465,6 +623,69 @@ mod tests {
     use super::*;
 
     const TEST_URL: &str = "https://play.google.com/console/u/1/developers/123456/app-list";
+
+    #[test]
+    fn parses_firefox_startup_curl_with_encoded_headers_and_body() {
+        let key = format!("AIza{}", "x".repeat(35));
+        let mut url = Url::parse(
+            "https://playconsoleapps-pa.clients6.google.com/v1/developers/appList:startupData",
+        )
+        .unwrap();
+        url.query_pairs_mut().append_pair("$httpHeaders", &format!(
+            "Content-Type:application/json+protobuf\r\nX-Goog-AuthUser:1\r\nAuthorization:SAPISIDHASH stale\r\nX-Goog-Api-Key:{key}\r\nX-Play-Console-Session-Id:test-id\r\n"
+        ));
+        let command = format!(
+            "curl '{url}' \\\n  --compressed \\\n  -X POST \\\n  -H 'Cookie: SID=test-session; SAPISID=test-signing-cookie; S=sso=one:billing=two' \\\n  --data-raw '{{\"1\":{{\"1\":\"123456\"}}}}'"
+        );
+        let connection = Connection::parse_curl(&command).unwrap();
+        assert_eq!(connection.developer_id, "123456");
+        assert_eq!(connection.auth_user, "1");
+        assert_eq!(connection.console_url.as_str(), TEST_URL);
+        assert_eq!(connection.setup.as_ref().unwrap()["8"], key);
+        assert_eq!(connection.setup.as_ref().unwrap()["27"], "test-id");
+        assert!(
+            connection
+                .cookies
+                .to_str()
+                .unwrap()
+                .ends_with("S=sso=one:billing=two")
+        );
+    }
+
+    #[test]
+    fn parses_chrome_headers_cookie_option_and_legacy_page_commands() {
+        let key = format!("AIza{}", "x".repeat(35));
+        let command = format!(
+            r#"curl "https://playconsoleapps-pa.clients6.google.com/v1/developers/123456/appSummaries?pageSize=500" --header="X-Goog-Api-Key: {key}" -H "X-Goog-AuthUser: 1" -b 'SID=test; SAPISID=literal$(never-execute)'"#
+        );
+        let connection = Connection::parse_curl(&command).unwrap();
+        assert_eq!(connection.developer_id, "123456");
+        assert_eq!(connection.auth_user, "1");
+        assert_eq!(connection.signing_cookie, "literal$(never-execute)");
+        assert!(connection.setup.is_some());
+        let connection = Connection::parse_curl(&format!(
+            "curl '{TEST_URL}' -H 'Cookie: SID=test; SAPISID=signing'"
+        ))
+        .unwrap();
+        assert!(connection.setup.is_none());
+    }
+
+    #[test]
+    fn curl_errors_reject_incomplete_and_unrelated_requests_without_leaking_input() {
+        for command in [
+            "not-curl do-not-leak",
+            "curl 'unfinished-do-not-leak",
+            "curl 'https://attacker.test/do-not-leak' -H 'Cookie: SID=secret; SAPISID=secret'",
+            "curl 'https://play.google.com/console/u/1/developers/123456/app-list'",
+            "curl 'https://playconsoleapps-pa.clients6.google.com/v1/developers/appList:startupData' --data-raw 'do-not-leak' -b 'SID=secret; SAPISID=secret'",
+            "curl 'https://playconsoleapps-pa.clients6.google.com/v1/developers/123456/appSummaries' -b 'SID=secret; SAPISID=secret'",
+            "curl --header",
+        ] {
+            let error = Connection::parse_curl(command).err().unwrap();
+            assert!(!error.contains("do-not-leak"));
+            assert!(!error.contains("secret"));
+        }
+    }
 
     #[test]
     fn signs_the_millisecond_timestamp_in_the_header() {

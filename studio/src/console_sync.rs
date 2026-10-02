@@ -18,13 +18,9 @@ pub(crate) struct SyncJob {
 }
 
 impl SyncJob {
-    pub(crate) fn start_with_cookies(
-        ctx: &egui::Context,
-        console_url: &str,
-        cookies: &str,
-    ) -> Result<Self, String> {
+    pub(crate) fn start_with_curl(ctx: &egui::Context, curl: &str) -> Result<Self, String> {
         log::debug!("Starting Play Console cookie sync");
-        let connection = crate::console_cookies::Connection::parse(console_url, cookies)
+        let connection = crate::console_cookies::Connection::parse_curl(curl)
             .inspect_err(|error| log::debug!("Play Console sync validation failed: {error}"))?;
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = Arc::clone(&cancelled);

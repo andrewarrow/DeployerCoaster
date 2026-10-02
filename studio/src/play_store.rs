@@ -199,7 +199,11 @@ enum Event {
 
 #[derive(Default, Deserialize, Serialize)]
 struct ConsoleCredentials {
+    #[serde(default)]
+    curl: String,
+    #[serde(default)]
     url: String,
+    #[serde(default)]
     cookies: String,
 }
 
@@ -210,16 +214,16 @@ impl ConsoleCredentials {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(Self::default());
             }
-            Err(_) => return Err("Could not read the saved Play Console URL and cookies.".into()),
+            Err(_) => return Err("Could not read the saved Play Console cURL command.".into()),
         };
         serde_json::from_slice(&bytes).map_err(|_| {
-            "Could not load the saved Play Console URL and cookies. Paste them again.".into()
+            "Could not load the saved Play Console cURL command. Paste it again.".into()
         })
     }
 
     fn save(&self, path: &std::path::Path) -> Result<(), String> {
         let bytes = serde_json::to_vec(self)
-            .map_err(|_| "Could not encode Play Console URL and cookies.".to_owned())?;
+            .map_err(|_| "Could not encode the Play Console cURL command.".to_owned())?;
         crate::storage::save_credentials(path, &bytes)
     }
 }
@@ -250,8 +254,8 @@ pub struct PlayStore {
     console_sync: Option<crate::console_sync::SyncJob>,
     console_feedback: Option<String>,
     console_credentials_error: Option<String>,
-    console_url: String,
-    console_cookies: String,
+    console_curl: String,
+    cookie_help_texture: Option<(egui::Context, egui::TextureHandle)>,
     show_cookie_help: bool,
 }
 
@@ -355,8 +359,18 @@ impl PlayStore {
             .and_then(|path| ConsoleCredentials::load_from(&path))
         {
             Ok(credentials) => {
-                store.console_url = credentials.url;
-                store.console_cookies = credentials.cookies;
+                store.console_curl = if !credentials.curl.is_empty() {
+                    credentials.curl
+                } else if !credentials.url.is_empty() && !credentials.cookies.is_empty() {
+                    // Preserve existing sessions in the new single-input format.
+                    format!(
+                        "curl '{}' -H 'Cookie: {}'",
+                        credentials.url.replace('\'', "'\\''"),
+                        credentials.cookies.replace('\'', "'\\''")
+                    )
+                } else {
+                    String::new()
+                };
             }
             Err(error) => store.console_credentials_error = Some(error),
         }
@@ -373,7 +387,6 @@ impl PlayStore {
         ui.add_space(16.0);
         self.console_cookie_ui(ui);
         self.console_ui(ui);
-        self.cookie_help_ui(ui);
     }
 
     pub fn apps_ui(&mut self, ui: &mut egui::Ui) {
@@ -534,70 +547,54 @@ impl PlayStore {
     fn console_cookie_ui(&mut self, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("Play Console app icons").strong());
         ui.add(egui::Label::new(
-            "Open Developer Tools → Network, then reload your Play Console app list. Select the app-list page request and copy the full Cookie value from Request Headers. document.cookie omits required session cookies.",
+            "Open Developer Tools → Network, then reload your Play Console app list. Right-click the appList:startupData request and choose Copy Value → Copy as cURL. Paste the entire command below.",
         ).wrap());
-        ui.horizontal_wrapped(|ui| {
-            ui.hyperlink_to("Open Play Console", "https://play.google.com/console/");
-        });
+        ui.hyperlink_to("Open Play Console", "https://play.google.com/console/");
+        self.cookie_help_ui(ui);
         ui.add_space(8.0);
-        ui.label("Play Console app-list URL (required)");
-        let url_changed = ui
-            .add(
-                egui::TextEdit::singleline(&mut self.console_url)
-                    .id_salt("console_cookie_url")
-                    .desired_width(ui.available_width())
-                    .hint_text("https://play.google.com/console/u/0/developers/…/app-list")
-                    .char_limit(2048),
-            )
-            .changed();
-        ui.label("Cookie request header");
-        let cookies_changed = ui
-            .add(
-                egui::TextEdit::singleline(&mut self.console_cookies)
-                    .id_salt("console_cookie_value")
-                    .desired_width(ui.available_width())
-                    .password(true)
-                    .hint_text("Paste the full Cookie request header value")
-                    .char_limit(64 * 1024),
-            )
-            .changed();
-        if url_changed || cookies_changed {
+        ui.label("cURL command");
+        let changed = egui::ScrollArea::vertical()
+            .id_salt("console_curl_scroll")
+            .max_height(160.0)
+            .show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.console_curl)
+                        .id_salt("console_curl_value")
+                        .desired_width(ui.available_width())
+                        .desired_rows(5)
+                        .hint_text("Paste the entire copied cURL command")
+                        .char_limit(128 * 1024),
+                )
+                .changed()
+            })
+            .inner;
+        if changed {
             self.console_credentials_error =
                 crate::storage::credential_path("google-console-session.json")
                     .and_then(|path| {
                         ConsoleCredentials {
-                            url: self.console_url.clone(),
-                            cookies: self.console_cookies.clone(),
+                            curl: self.console_curl.clone(),
+                            ..ConsoleCredentials::default()
                         }
                         .save(&path)
                     })
                     .err()
-                    .map(|error| format!("URL and cookies could not be saved: {error}"));
+                    .map(|error| format!("The cURL command could not be saved: {error}"));
         }
-        ui.add(egui::Label::new("URL and cookies are saved locally on this device.").wrap());
+        ui.add(egui::Label::new("The command is saved locally on this device.").wrap());
         if let Some(error) = &self.console_credentials_error {
             ui.add(egui::Label::new(error).wrap());
-        }
-        if !self.console_cookies.trim().is_empty() && self.console_url.trim().is_empty() {
-            ui.add(
-                egui::Label::new("Also paste the app-list URL from your browser's address bar.")
-                    .wrap(),
-            );
         }
         ui.add_space(8.0);
         if ui
             .add_enabled(
-                self.console_sync.is_none() && !self.console_cookies.trim().is_empty(),
+                self.console_sync.is_none() && !self.console_curl.trim().is_empty(),
                 egui::Button::new("Sync app icons").min_size(egui::vec2(140.0, 44.0)),
             )
             .clicked()
         {
             self.console_feedback = None;
-            match crate::console_sync::SyncJob::start_with_cookies(
-                ui.ctx(),
-                &self.console_url,
-                &self.console_cookies,
-            ) {
+            match crate::console_sync::SyncJob::start_with_curl(ui.ctx(), &self.console_curl) {
                 Ok(job) => self.console_sync = Some(job),
                 Err(error) => self.console_feedback = Some(error),
             }
@@ -605,31 +602,57 @@ impl PlayStore {
     }
 
     fn cookie_help_ui(&mut self, ui: &mut egui::Ui) {
+        if self
+            .cookie_help_texture
+            .as_ref()
+            .is_none_or(|(ctx, _)| ctx != ui.ctx())
+        {
+            if let Ok(image) = image::load_from_memory(include_bytes!("../assets/curl.png")) {
+                let image = image.into_rgba8();
+                self.cookie_help_texture = Some((
+                    ui.ctx().clone(),
+                    ui.ctx().load_texture(
+                        "play-console-curl-help",
+                        egui::ColorImage::from_rgba_unmultiplied(
+                            [image.width() as usize, image.height() as usize],
+                            &image,
+                        ),
+                        egui::TextureOptions::LINEAR,
+                    ),
+                ));
+            }
+        }
+        let Some((_, texture)) = &self.cookie_help_texture else {
+            return;
+        };
+        let alt_text = "Play Console Network tab: right-click appList:startupData, then Copy Value → Copy as cURL.";
         ui.add_space(8.0);
-        if ui.button("How to copy the Cookie header").clicked() {
+        if ui
+            .add(
+                egui::Image::new(texture)
+                    .max_width(ui.available_width())
+                    .alt_text(alt_text)
+                    .sense(egui::Sense::click()),
+            )
+            .on_hover_text("Click to view full size")
+            .clicked()
+        {
             self.show_cookie_help = true;
         }
-        egui::Window::new("How to copy Play Console cookies")
+        egui::Window::new("Copy as cURL")
             .open(&mut self.show_cookie_help)
-            .default_width(480.0)
+            .default_size(egui::vec2(900.0, 400.0))
             .max_size(
                 (ui.ctx().content_rect().size() - egui::vec2(32.0, 64.0))
                     .max(egui::vec2(100.0, 100.0)),
             )
-            .scroll([false, true])
+            .scroll([true, true])
             .show(ui.ctx(), |ui| {
-                for step in [
-                    "1. Open your Play Console app list while signed in to the correct account. Copy the URL from the address bar.",
-                    "2. Open Developer Tools → Network, then reload the page.",
-                    "3. Select the app-list document request to play.google.com (not an analytics or image request).",
-                    "4. Under Headers → Request Headers, copy the entire Cookie value and paste it into Studio.",
-                ] {
-                    ui.add(egui::Label::new(step).wrap());
-                    ui.add_space(8.0);
-                }
-                ui.add(egui::Label::new(
-                    "Use the request's Cookie header, not the response's Set-Cookie header or document.cookie. If the session expires, reload the signed-in page and copy a fresh header.",
-                ).wrap());
+                ui.add(
+                    egui::Image::new(texture)
+                        .fit_to_original_size(1.0)
+                        .alt_text(alt_text),
+                );
             });
     }
 
@@ -1061,6 +1084,7 @@ mod tests {
         let mut credentials = ConsoleCredentials {
             url: "https://play.google.com/console/u/0/developers/123/app-list".into(),
             cookies: "SAPISID=test-cookie; other=value".into(),
+            ..ConsoleCredentials::default()
         };
         credentials.save(&path).unwrap();
         let restored = ConsoleCredentials::load_from(&path).unwrap();
