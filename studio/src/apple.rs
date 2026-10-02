@@ -241,6 +241,7 @@ pub struct AppleStore {
     job: Option<AppJob>,
     error: Option<String>,
     cancelled: bool,
+    icons: crate::app_icons::AppIcons,
 }
 
 impl AppleStore {
@@ -302,6 +303,7 @@ impl AppleStore {
                 )
                 .clicked()
             {
+                self.icons.refresh();
                 self.start(ui.ctx());
             }
             settings = ui
@@ -322,6 +324,24 @@ impl AppleStore {
                 }
             });
         }
+        if self.loaded
+            && self.job.is_none()
+            && !self.cancelled
+            && self.error.is_none()
+            && self.icons.needs_start()
+        {
+            self.icons.ensure_started(
+                crate::app_icons::Store::Apple,
+                self.apps
+                    .iter()
+                    .filter(|app| !app.attributes.bundle_id.is_empty())
+                    .map(|app| crate::app_icons::IconRequest {
+                        key: app.attributes.bundle_id.clone(),
+                    })
+                    .collect(),
+                ui.ctx(),
+            );
+        }
         if let Some(error) = &self.error {
             ui.add(
                 egui::Label::new(egui::RichText::new(error).color(ui.visuals().error_fg_color))
@@ -335,23 +355,33 @@ impl AppleStore {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    let icons = &mut self.icons;
                     for app in &self.apps {
                         let title = if app.attributes.name.is_empty() {
                             &app.id
                         } else {
                             &app.attributes.name
                         };
-                        ui.add(egui::Label::new(egui::RichText::new(title).strong()).wrap());
-                        if !app.attributes.bundle_id.is_empty() {
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(&app.attributes.bundle_id).monospace(),
-                                )
-                                .wrap(),
-                            );
-                        }
-                        ui.label(format!("App ID: {}", app.id));
-                        ui.add_space(12.0);
+                        ui.horizontal_top(|ui| {
+                            icons.ui_icon(ui, &app.attributes.bundle_id, title);
+                            ui.add_space(8.0);
+                            ui.vertical(|ui| {
+                                ui.add(
+                                    egui::Label::new(egui::RichText::new(title).strong()).wrap(),
+                                );
+                                if !app.attributes.bundle_id.is_empty() {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(&app.attributes.bundle_id)
+                                                .monospace(),
+                                        )
+                                        .wrap(),
+                                    );
+                                }
+                                ui.label(format!("App ID: {}", app.id));
+                            });
+                        });
+                        ui.add_space(8.0);
                     }
                 });
         }

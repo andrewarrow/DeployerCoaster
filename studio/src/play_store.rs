@@ -218,6 +218,7 @@ pub struct PlayStore {
     progress: Option<&'static str>,
     error: Option<String>,
     cancelled: bool,
+    icons: crate::app_icons::AppIcons,
 }
 
 impl PlayStore {
@@ -260,6 +261,23 @@ impl PlayStore {
         self.connection_ui(ui, true);
         self.error_ui(ui);
         if self.session.is_some() {
+            if self.loaded
+                && self.job.is_none()
+                && !self.cancelled
+                && self.error.is_none()
+                && self.icons.needs_start()
+            {
+                self.icons.ensure_started(
+                    crate::app_icons::Store::Play,
+                    self.apps
+                        .iter()
+                        .map(|app| crate::app_icons::IconRequest {
+                            key: app.package_name.clone(),
+                        })
+                        .collect(),
+                    ui.ctx(),
+                );
+            }
             ui.add_space(8.0);
             if self.loaded && self.apps.is_empty() && self.job.is_none() && self.error.is_none() {
                 ui.label("No apps are accessible to this Google account.");
@@ -267,22 +285,32 @@ impl PlayStore {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        let icons = &mut self.icons;
                         for app in &self.apps {
                             let title = if app.display_name.is_empty() {
                                 &app.package_name
                             } else {
                                 &app.display_name
                             };
-                            ui.add(egui::Label::new(egui::RichText::new(title).strong()).wrap());
-                            if !app.display_name.is_empty() {
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(&app.package_name).monospace(),
-                                    )
-                                    .wrap(),
-                                );
-                            }
-                            ui.add_space(12.0);
+                            ui.horizontal_top(|ui| {
+                                icons.ui_icon(ui, &app.package_name, title);
+                                ui.add_space(8.0);
+                                ui.vertical(|ui| {
+                                    ui.add(
+                                        egui::Label::new(egui::RichText::new(title).strong())
+                                            .wrap(),
+                                    );
+                                    if !app.display_name.is_empty() {
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(&app.package_name).monospace(),
+                                            )
+                                            .wrap(),
+                                        );
+                                    }
+                                });
+                            });
+                            ui.add_space(8.0);
                         }
                     });
             }
@@ -296,6 +324,7 @@ impl PlayStore {
                     .add_sized([180.0, 44.0], egui::Button::new("Connect Play Store"))
                     .clicked()
                 {
+                    self.icons.refresh();
                     self.start(ui.ctx());
                 }
             } else {
@@ -311,6 +340,7 @@ impl PlayStore {
                         )
                         .clicked()
                 {
+                    self.icons.refresh();
                     self.start(ui.ctx());
                 }
                 if ui

@@ -4,6 +4,7 @@
 )]
 
 mod app;
+mod app_icons;
 mod apple;
 mod commands;
 #[cfg(target_os = "macos")]
