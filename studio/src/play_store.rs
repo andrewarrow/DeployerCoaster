@@ -217,6 +217,7 @@ pub struct PlayStore {
     job: Option<Job>,
     progress: Option<&'static str>,
     error: Option<String>,
+    cancelled: bool,
 }
 
 impl PlayStore {
@@ -235,12 +236,60 @@ impl PlayStore {
         }
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
+    pub fn settings_ui(&mut self, ui: &mut egui::Ui) {
         self.poll();
-        if self.session.is_some() && !self.loaded && self.job.is_none() && self.error.is_none() {
+        if self.session.is_some() {
+            ui.label("Google Play connected");
+        }
+        self.connection_ui(ui, false);
+        self.error_ui(ui);
+    }
+
+    pub fn apps_ui(&mut self, ui: &mut egui::Ui) {
+        self.poll();
+        if self.session.is_some()
+            && !self.loaded
+            && !self.cancelled
+            && self.job.is_none()
+            && self.error.is_none()
+        {
             self.start(ui.ctx());
         }
-        ui.set_max_width(ui.available_width().min(720.0));
+        ui.heading("Play Store apps");
+        ui.add_space(8.0);
+        self.connection_ui(ui, true);
+        self.error_ui(ui);
+        if self.session.is_some() {
+            ui.add_space(8.0);
+            if self.loaded && self.apps.is_empty() && self.job.is_none() && self.error.is_none() {
+                ui.label("No apps are accessible to this Google account.");
+            } else {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for app in &self.apps {
+                            let title = if app.display_name.is_empty() {
+                                &app.package_name
+                            } else {
+                                &app.display_name
+                            };
+                            ui.add(egui::Label::new(egui::RichText::new(title).strong()).wrap());
+                            if !app.display_name.is_empty() {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&app.package_name).monospace(),
+                                    )
+                                    .wrap(),
+                                );
+                            }
+                            ui.add_space(12.0);
+                        }
+                    });
+            }
+        }
+    }
+
+    fn connection_ui(&mut self, ui: &mut egui::Ui, show_refresh: bool) {
         if self.session.is_none() {
             if self.job.is_none() {
                 if ui
@@ -253,15 +302,14 @@ impl PlayStore {
                 self.progress_ui(ui);
             }
         } else {
-            ui.heading("Play Store apps");
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        self.job.is_none(),
-                        egui::Button::new("Refresh").min_size(egui::vec2(80.0, 44.0)),
-                    )
-                    .clicked()
+            ui.horizontal_wrapped(|ui| {
+                if show_refresh
+                    && ui
+                        .add_enabled(
+                            self.job.is_none(),
+                            egui::Button::new("Refresh").min_size(egui::vec2(80.0, 44.0)),
+                        )
+                        .clicked()
                 {
                     self.start(ui.ctx());
                 }
@@ -299,6 +347,9 @@ impl PlayStore {
                 self.progress_ui(ui);
             }
         }
+    }
+
+    fn error_ui(&self, ui: &mut egui::Ui) {
         if let Some(error) = &self.error {
             ui.add_space(8.0);
             ui.add(
@@ -310,35 +361,6 @@ impl PlayStore {
                     "Enable Play Developer Reporting API",
                     "https://console.cloud.google.com/apis/library/playdeveloperreporting.googleapis.com",
                 );
-            }
-        }
-        if self.session.is_some() {
-            ui.add_space(16.0);
-            if self.loaded && self.apps.is_empty() {
-                ui.label("No apps are accessible to this Google account.");
-            } else {
-                egui::ScrollArea::vertical()
-                    .max_height(240.0)
-                    .auto_shrink([false, true])
-                    .show(ui, |ui| {
-                        for app in &self.apps {
-                            let title = if app.display_name.is_empty() {
-                                &app.package_name
-                            } else {
-                                &app.display_name
-                            };
-                            ui.add(egui::Label::new(egui::RichText::new(title).strong()).wrap());
-                            if !app.display_name.is_empty() {
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(&app.package_name).monospace(),
-                                    )
-                                    .wrap(),
-                                );
-                            }
-                            ui.add_space(12.0);
-                        }
-                    });
             }
         }
     }
@@ -353,6 +375,7 @@ impl PlayStore {
             {
                 self.job = None;
                 self.progress = None;
+                self.cancelled = true;
             }
         });
     }
@@ -362,6 +385,7 @@ impl PlayStore {
             return;
         }
         self.error = None;
+        self.cancelled = false;
         self.progress = Some(if self.session.is_some() {
             "Loading apps…"
         } else {
@@ -997,7 +1021,7 @@ mod tests {
             for _ in 0..2 {
                 let _ = ctx.run_ui(input.clone(), |ui| {
                     egui::CentralPanel::default_margins().show(ui, |ui| {
-                        store.ui(ui);
+                        store.apps_ui(ui);
                         assert!(
                             ui.min_rect().right() <= width,
                             "Horizontal overflow at {width}px"

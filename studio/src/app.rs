@@ -31,6 +31,21 @@ impl SettingsSection {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppWindow {
+    Android,
+    Apple,
+}
+
+impl AppWindow {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Android => "Android",
+            Self::Apple => "Apple",
+        }
+    }
+}
+
 pub struct App {
     preferences: Preferences,
     preferences_path: Option<PathBuf>,
@@ -44,6 +59,8 @@ pub struct App {
     status_is_error: bool,
     play_store: PlayStore,
     apple: crate::apple::AppleSettings,
+    apple_store: crate::apple::AppleStore,
+    requested_app_windows: Vec<AppWindow>,
 }
 
 impl App {
@@ -70,6 +87,8 @@ impl App {
             status: preference_error,
             play_store: PlayStore::load(),
             apple: crate::apple::AppleSettings::load(),
+            apple_store: crate::apple::AppleStore::default(),
+            requested_app_windows: Vec::new(),
         };
         if let Some(path) = initial_path {
             app.open_path(path);
@@ -79,6 +98,8 @@ impl App {
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         self.play_store.poll();
+        self.apple_store.set_credentials(self.apple.credentials());
+        self.apple_store.poll();
         let ctx = ui.ctx().clone();
         ctx.set_theme(self.preferences.appearance.theme());
         #[cfg(not(target_os = "macos"))]
@@ -92,6 +113,15 @@ impl App {
         egui::Panel::top("app_menu").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
+                    for (label, command) in
+                        [("Android", Command::Android), ("Apple", Command::Apple)]
+                    {
+                        if ui.button(label).clicked() {
+                            selected_command = Some(command);
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
                     if ui.button("Open…").clicked() {
                         selected_command = Some(Command::OpenWorkspace);
                         ui.close();
@@ -300,6 +330,8 @@ impl App {
                 self.settings_section = SettingsSection::General;
                 self.show_settings = self.workspace.is_some();
             }
+            Command::Android => self.requested_app_windows.push(AppWindow::Android),
+            Command::Apple => self.requested_app_windows.push(AppWindow::Apple),
             Command::About => {
                 #[cfg(target_os = "macos")]
                 crate::macos::show_about_panel();
@@ -331,6 +363,41 @@ impl App {
 
     pub fn should_quit(&self) -> bool {
         self.quit
+    }
+
+    pub fn take_app_window_request(&mut self) -> Option<AppWindow> {
+        if self.requested_app_windows.is_empty() {
+            None
+        } else {
+            Some(self.requested_app_windows.remove(0))
+        }
+    }
+
+    /// Returns true when the Settings window should be brought to the front.
+    pub fn app_window_ui(&mut self, window: AppWindow, ui: &mut egui::Ui) -> bool {
+        ui.ctx().set_theme(self.preferences.appearance.theme());
+        let mut settings = false;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin::same(16)))
+            .show(ui, |ui| match window {
+                AppWindow::Android => self.play_store.apps_ui(ui),
+                AppWindow::Apple => {
+                    self.apple_store.set_credentials(self.apple.credentials());
+                    settings = self.apple_store.apps_ui(ui);
+                }
+            });
+        if settings {
+            self.settings_section = SettingsSection::Apple;
+            self.show_settings = self.workspace.is_some();
+        }
+        settings
+    }
+
+    pub fn window_error(&mut self, window: AppWindow) {
+        self.set_error(format!(
+            "Could not open the {} window. Please try again.",
+            window.title()
+        ));
     }
 
     #[cfg(target_os = "macos")]
@@ -558,9 +625,31 @@ impl App {
                             SettingsSection::Android => {
                                 ui.label(egui::RichText::new("Google Play Store").strong());
                                 ui.add_space(8.0);
-                                self.play_store.ui(ui);
+                                self.play_store.settings_ui(ui);
+                                ui.add_space(8.0);
+                                if ui
+                                    .add(
+                                        egui::Button::new("Open Android apps")
+                                            .min_size(egui::vec2(160.0, 44.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    self.command(Command::Android);
+                                }
                             }
-                            SettingsSection::Apple => self.apple.ui(ui),
+                            SettingsSection::Apple => {
+                                self.apple.ui(ui);
+                                ui.add_space(8.0);
+                                if ui
+                                    .add(
+                                        egui::Button::new("Open Apple apps")
+                                            .min_size(egui::vec2(160.0, 44.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    self.command(Command::Apple);
+                                }
+                            }
                         }
                     });
             });
@@ -661,6 +750,8 @@ mod tests {
             status_is_error: false,
             play_store: PlayStore::default(),
             apple: crate::apple::AppleSettings::default(),
+            apple_store: crate::apple::AppleStore::default(),
+            requested_app_windows: Vec::new(),
         }
     }
 

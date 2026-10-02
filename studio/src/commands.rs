@@ -9,6 +9,8 @@ pub enum Command {
     CloseWorkspace,
     Quit,
     Settings,
+    Android,
+    Apple,
     About,
     ToggleSidebar,
     ToggleInspector,

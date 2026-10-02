@@ -37,6 +37,8 @@ const CUT: isize = 14;
 const COPY: isize = 15;
 const PASTE: isize = 16;
 const SELECT_ALL: isize = 17;
+const ANDROID: isize = 18;
+const APPLE: isize = 19;
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct MenuState {
@@ -92,6 +94,8 @@ objc2::define_class!(
             let action = match sender.tag() {
                 ABOUT => Some(MenuAction::Command(Command::About)),
                 SETTINGS => Some(MenuAction::Command(Command::Settings)),
+                ANDROID => Some(MenuAction::Command(Command::Android)),
+                APPLE => Some(MenuAction::Command(Command::Apple)),
                 OPEN => Some(MenuAction::Command(Command::OpenWorkspace)),
                 SAVE => Some(MenuAction::Command(Command::Save)),
                 SAVE_AS => Some(MenuAction::Command(Command::SaveAs)),
@@ -191,6 +195,20 @@ pub(crate) fn install_native_menu(proxy: EventLoopProxy<Instant>) {
 
     let file = NSMenu::new(mtm);
     file.setTitle(ns_string!("File"));
+    for (title, tag) in [("Android", ANDROID), ("Apple", APPLE)] {
+        add(
+            &file,
+            menu_item(
+                mtm,
+                target_obj,
+                title,
+                "",
+                tag,
+                NSEventModifierFlags::empty(),
+            ),
+        );
+    }
+    add(&file, NSMenuItem::separatorItem(mtm));
     add(
         &file,
         menu_item(
