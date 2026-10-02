@@ -23,13 +23,21 @@ impl SyncJob {
         console_url: &str,
         cookies: &str,
     ) -> Result<Self, String> {
-        let connection = crate::console_cookies::Connection::parse(console_url, cookies)?;
+        log::debug!("Starting Play Console cookie sync");
+        let connection = crate::console_cookies::Connection::parse(console_url, cookies)
+            .inspect_err(|error| log::debug!("Play Console sync validation failed: {error}"))?;
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = Arc::clone(&cancelled);
         let (sender, receiver) = mpsc::channel();
         let repaint_context = ctx.clone();
         thread::spawn(move || {
             let result = connection.fetch(&worker_cancelled);
+            match &result {
+                Ok(snapshot) => {
+                    log::debug!("Play Console sync completed: {} apps", snapshot.apps.len())
+                }
+                Err(error) => log::debug!("Play Console sync failed: {error}"),
+            }
             let _ = sender.send(result);
             repaint_context.request_repaint();
         });
