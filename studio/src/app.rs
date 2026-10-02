@@ -635,7 +635,9 @@ impl App {
             .collapsible(false)
             .show(ctx, |ui| {
                 ui.label(metadata::APP_NAME);
-                ui.label(format!("Version {}", metadata::version_label()));
+                ui.label(format!("Version {}", metadata::GIT_SHA));
+                ui.hyperlink_to("Website", metadata::WEBSITE_URL);
+                ui.hyperlink_to("GitHub", metadata::GITHUB_URL);
             });
         self.show_about = open;
     }

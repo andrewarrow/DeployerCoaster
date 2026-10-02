@@ -35,9 +35,10 @@ webbrowser = "1"
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSApplication", "NSEvent", "NSCell", "NSImage", "NSMenu", "NSMenuItem", "NSResponder", "NSRunningApplication",
+    "NSAttributedString", "NSColor", "NSFont", "NSParagraphStyle", "NSText",
 ] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
-    "NSData", "NSDictionary", "NSObject", "NSString",
+    "NSData", "NSDictionary", "NSObject", "NSString", "NSAttributedString", "NSRange",
 ] }
 
 [profile.release]
