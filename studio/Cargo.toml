@@ -14,9 +14,11 @@ path = "src/main.rs"
 
 [dependencies]
 base64 = "0.22"
+csv = "1.4"
+flate2 = "1.1"
 hmac = "0.12"
 sha2 = "0.10"
-time = "0.3"
+time = { version = "0.3", features = ["local-offset"] }
 dirs = "6"
 dotenvy = "0.15"
 egui = "0.35"

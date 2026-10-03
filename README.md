@@ -15,6 +15,15 @@ desktop installed based software for developers to help with app store connect, 
 
 Run the desktop studio with `cargo run --manifest-path studio/Cargo.toml`.
 
+Open **Analytics** for daily and monthly App Store sales reports, or an app's
+**Analytics** tab for its reports. In **Settings → Apple**, save your App Store
+Connect Team Key credentials and vendor number (found in Payments and Financial
+Reports). The key needs permission to download sales reports. Reports show units,
+developer proceeds by currency, and expandable device/version, download, update,
+redownload, and country breakdowns. Reports are cached locally by account, vendor,
+and period; **Refresh** downloads revisions. Monthly reports default to the previous
+month, and daily reports to yesterday.
+
 The empty window has a **Connect Play Store** button. It opens Google sign-in in
 your default browser, receives the authorization through a local loopback callback,
 and lists the account's accessible apps by title and package name. Refresh reloads
@@ -34,4 +43,3 @@ in the client's Google Cloud project. Sign-in requests `androidpublisher` and
 requires the reporting scope. The Google account must have access to the apps in
 Play Console. If the OAuth app is in testing, add the signing-in account to its
 test users. Keep the client JSON outside the repository.
-

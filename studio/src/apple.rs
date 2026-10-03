@@ -24,12 +24,30 @@ pub(crate) struct AppleCredentials {
     private_key: String,
 }
 
+impl AppleCredentials {
+    pub(crate) fn sales_cache_account(&self) -> String {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(self.issuer_id.as_bytes()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_credentials(issuer: &str) -> Self {
+        Self {
+            issuer_id: issuer.into(),
+            key_id: "test-key".into(),
+            private_key: "test-private-key".into(),
+        }
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
 pub struct AppleSettings {
     issuer_id: String,
     key_id: String,
     private_key: String,
     filename: String,
+    #[serde(default)]
+    vendor_number: String,
     #[serde(skip)]
     feedback: Option<String>,
     #[serde(skip)]
@@ -38,6 +56,8 @@ pub struct AppleSettings {
     changed: bool,
     #[serde(skip)]
     saved_credentials: Option<AppleCredentials>,
+    #[serde(skip)]
+    saved_vendor_number: String,
     #[serde(skip)]
     api_key_help_texture: Option<(egui::Context, egui::TextureHandle)>,
     #[serde(skip)]
@@ -61,6 +81,7 @@ impl AppleSettings {
             ..Self::default()
         });
         settings.saved_credentials = settings.current_credentials();
+        settings.saved_vendor_number = settings.vendor_number.trim().to_owned();
         settings
     }
 
@@ -80,6 +101,10 @@ impl AppleSettings {
 
     pub(crate) fn credentials(&self) -> Option<AppleCredentials> {
         self.saved_credentials.clone()
+    }
+
+    pub(crate) fn saved_vendor_number(&self) -> &str {
+        &self.saved_vendor_number
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
@@ -155,19 +180,45 @@ impl AppleSettings {
             }
         }
         ui.add_space(8.0);
+        let vendor_label = ui.label("Vendor number (for sales reports)");
+        self.changed |= ui
+            .add(
+                egui::TextEdit::singleline(&mut self.vendor_number)
+                    .desired_width(ui.available_width())
+                    .hint_text("Enter vendor number"),
+            )
+            .labelled_by(vendor_label.id)
+            .changed();
+        ui.hyperlink_to(
+            "Find your vendor number in App Store Connect",
+            "https://appstoreconnect.apple.com/itc/payments_and_financial_reports",
+        );
+        let vendor_valid = self
+            .vendor_number
+            .trim()
+            .bytes()
+            .all(|byte| byte.is_ascii_digit());
+        if !vendor_valid {
+            ui.colored_label(
+                ui.visuals().error_fg_color,
+                "Vendor number must contain only digits.",
+            );
+        }
+        ui.add_space(8.0);
         let complete = !self.issuer_id.trim().is_empty()
             && !self.key_id.trim().is_empty()
             && !self.private_key.is_empty();
         ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(
-                    complete && self.changed,
+                    complete && vendor_valid && self.changed,
                     egui::Button::new("Save Apple settings").min_size(egui::vec2(150.0, 44.0)),
                 )
                 .clicked()
             {
                 self.issuer_id = self.issuer_id.trim().to_owned();
                 self.key_id = self.key_id.trim().to_owned();
+                self.vendor_number = self.vendor_number.trim().to_owned();
                 let result =
                     crate::storage::credential_path("apple-credentials.json").and_then(|path| {
                         let bytes = serde_json::to_vec(self)
@@ -179,6 +230,7 @@ impl AppleSettings {
                     Ok(()) => {
                         self.changed = false;
                         self.saved_credentials = self.current_credentials();
+                        self.saved_vendor_number = self.vendor_number.clone();
                         "Apple settings saved. Connection has not been verified.".into()
                     }
                     Err(error) => error,
@@ -292,6 +344,8 @@ struct AppAttributes {
     name: String,
     #[serde(default)]
     bundle_id: String,
+    #[serde(default)]
+    sku: String,
 }
 
 #[derive(Deserialize)]
@@ -326,6 +380,7 @@ pub struct AppleStore {
     error: Option<String>,
     cancelled: bool,
     icons: crate::app_icons::AppIcons,
+    sales: crate::apple_sales::SalesReports,
 }
 
 impl AppleStore {
@@ -432,6 +487,25 @@ impl AppleStore {
                 ..Self::default()
             };
         }
+    }
+
+    pub(crate) fn set_reporting_vendor(&mut self, vendor: &str) {
+        self.sales.set_account(self.credentials.clone(), vendor);
+    }
+
+    /// Returns true when sales setup needs the Apple settings window.
+    pub(crate) fn sales_ui(&mut self, ui: &mut egui::Ui, app_id: Option<&str>) -> bool {
+        let listings = self.dashboard_apps();
+        let selected = app_id.map(|id| {
+            let sku = self
+                .apps
+                .iter()
+                .find(|app| app.id == id)
+                .map(|app| app.attributes.sku.as_str())
+                .unwrap_or_default();
+            (id, sku)
+        });
+        self.sales.ui(ui, selected, &listings, &mut self.icons)
     }
 
     /// Returns true when the user asks to edit Apple credentials in Settings.
@@ -590,7 +664,7 @@ struct Claims<'a> {
     aud: &'static str,
 }
 
-fn generate_token(credentials: &AppleCredentials) -> Result<String, String> {
+pub(crate) fn generate_token(credentials: &AppleCredentials) -> Result<String, String> {
     let key = EncodingKey::from_ec_pem(credentials.private_key.as_bytes())
         .map_err(|_| "The saved .p8 key is invalid. Replace it in Apple settings.".to_owned())?;
     let now = SystemTime::now()

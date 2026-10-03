@@ -44,12 +44,12 @@ impl Section {
     pub(super) fn has_dedicated_page(self) -> bool {
         matches!(
             self,
-            Self::Domains | Self::Hosting | Self::GitHub | Self::GoogleOAuth
+            Self::Domains | Self::Hosting | Self::GitHub | Self::GoogleOAuth | Self::Analytics
         )
     }
 
     pub(super) fn is_product_section(self) -> bool {
-        matches!(self, Self::Overview | Self::Apps | Self::Analytics)
+        matches!(self, Self::Overview | Self::Apps)
     }
 }
 

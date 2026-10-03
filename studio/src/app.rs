@@ -106,6 +106,8 @@ impl App {
         self.dynadot.poll();
         self.play_store.poll();
         self.apple_store.set_credentials(self.apple.credentials());
+        self.apple_store
+            .set_reporting_vendor(self.apple.saved_vendor_number());
         self.apple_store.poll();
         let ctx = ui.ctx().clone();
         ctx.set_theme(self.preferences.appearance.theme());
@@ -285,6 +287,10 @@ impl App {
                 self.settings_section = SettingsSection::Dynadot;
                 self.requested_app_windows.push(AppWindow::Settings);
             }
+            Command::AppleSettings => {
+                self.settings_section = SettingsSection::Apple;
+                self.requested_app_windows.push(AppWindow::Settings);
+            }
             Command::Android => self.requested_app_windows.push(AppWindow::Android),
             Command::Apple => self.requested_app_windows.push(AppWindow::Apple),
             Command::About => {
@@ -342,6 +348,8 @@ impl App {
                 AppWindow::Android => self.play_store.apps_ui(ui),
                 AppWindow::Apple => {
                     self.apple_store.set_credentials(self.apple.credentials());
+                    self.apple_store
+                        .set_reporting_vendor(self.apple.saved_vendor_number());
                     settings = self.apple_store.apps_ui(ui);
                 }
                 AppWindow::Settings => unreachable!(),
@@ -704,6 +712,14 @@ mod tests {
             dynadot: crate::dynadot::Dynadot::default(),
             requested_app_windows: Vec::new(),
         }
+    }
+
+    #[test]
+    fn sales_setup_opens_the_apple_settings_section() {
+        let mut app = app_with_workspace(Workspace::new());
+        app.command(Command::AppleSettings);
+        assert!(app.settings_section == SettingsSection::Apple);
+        assert_eq!(app.take_app_window_request(), Some(AppWindow::Settings));
     }
 
     #[test]

@@ -1,6 +1,73 @@
 use super::*;
 
 #[test]
+fn analytics_shows_sales_without_requiring_apps_and_opens_apple_settings() {
+    for (width, height) in [
+        (390.0, 844.0),
+        (768.0, 1024.0),
+        (1280.0, 800.0),
+        (1440.0, 900.0),
+    ] {
+        let mut dashboard = Dashboard::default();
+        dashboard.select_section(Section::Analytics);
+        dashboard.mobile_detail = true;
+        let mut play = PlayStore::default();
+        let mut apple = AppleStore::default();
+        let mut dynadot = crate::dynadot::Dynadot::default();
+        let ctx = egui::Context::default();
+        crate::style::configure(&ctx);
+        let mut button = Pos2::ZERO;
+        let mut action = None;
+        for phase in 0..4 {
+            let events = if phase >= 2 {
+                vec![
+                    egui::Event::PointerMoved(button),
+                    egui::Event::PointerButton {
+                        pos: button,
+                        button: egui::PointerButton::Primary,
+                        pressed: phase == 2,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]
+            } else {
+                vec![]
+            };
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, height))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    action = dashboard.ui(ui, &mut play, &mut apple, &mut dynadot, true);
+                    assert!(
+                        ui.min_rect().right() <= width,
+                        "Analytics overflow at {width}px"
+                    );
+                },
+            );
+            assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, Shape::Text(text) if text.galley.text() == "App Store sales")));
+            assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape, Shape::Text(text) if text.galley.text() == "Search apps or identifiers…" || text.galley.text() == "‹  My Apps")));
+            if phase < 2 {
+                button = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| {
+                        if let Shape::Text(text) = &shape.shape {
+                            (text.galley.text() == "Apple settings…")
+                                .then(|| text.pos + text.galley.size() * 0.5)
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("Sales setup button must be visible");
+            }
+        }
+        assert!(matches!(action, Some(Command::AppleSettings)));
+    }
+}
+
+#[test]
 fn google_oauth_navigation_opens_page_at_supported_sizes() {
     fn label_position(output: &egui::FullOutput, label: &str) -> Pos2 {
         output

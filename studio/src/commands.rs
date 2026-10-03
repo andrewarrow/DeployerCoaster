@@ -10,6 +10,7 @@ pub enum Command {
     Quit,
     Settings,
     DynadotSettings,
+    AppleSettings,
     Android,
     Apple,
     About,

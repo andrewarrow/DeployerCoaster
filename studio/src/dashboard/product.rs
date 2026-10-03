@@ -394,10 +394,6 @@ impl Dashboard {
                 "Releases",
                 "Release history isn't available from the connected app discovery services.",
             ),
-            Tab::Analytics => (
-                "Analytics",
-                "No analytics service is connected to this app.",
-            ),
             Tab::Monetization => (
                 "Monetization",
                 "No revenue service is connected to this app.",

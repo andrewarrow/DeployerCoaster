@@ -273,6 +273,16 @@ impl Dashboard {
                 }
                 Section::GitHub => self.github.ui(ui),
                 Section::GoogleOAuth => self.google_oauth.ui(ui),
+                Section::Analytics => {
+                    egui::ScrollArea::vertical()
+                        .id_salt("sales_reports")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            if apple.sales_ui(ui, None) {
+                                command = Some(Command::AppleSettings);
+                            }
+                        });
+                }
                 _ if compact && !self.mobile_detail && self.navigation.is_product_section() => {
                     if self.app_list(
                         ui,
@@ -329,6 +339,16 @@ impl Dashboard {
                                         palette,
                                         &mut command,
                                     ),
+                                    Tab::Analytics => {
+                                        if let Some(listing) = product.listings.iter().find(|listing| listing.store == Store::Apple) {
+                                            if apple.sales_ui(ui, Some(&listing.store_id)) {
+                                                command = Some(Command::AppleSettings);
+                                            }
+                                        } else {
+                                            ui.heading("Sales reports");
+                                            ui.add(egui::Label::new("Sales reports are available for App Store listings. This app has no connected App Store listing.").wrap());
+                                        }
+                                    }
                                     _ => self.unavailable_tab(ui, palette),
                                 }
                             } else {
