@@ -8,7 +8,7 @@ use crate::{
     metadata,
     play_store::PlayStore,
     preferences::{Appearance, Preferences},
-    wizard::Wizard,
+    wizard::{Wizard, WizardAction},
     workspace::{WORKSPACE_EXTENSION, Workspace},
 };
 
@@ -341,14 +341,7 @@ impl App {
             self.refresh_workspace_after_codex();
         }
         if let Some(result) = self.codex.take_rewritten_description() {
-            match self.dashboard.receive_rewritten_description(
-                &result.name,
-                &result.original,
-                &result.description,
-            ) {
-                Ok(()) => self.set_status(format!("Rewritten description saved for {}.", result.name)),
-                Err(error) => self.set_error(error),
-            }
+            self.wizard.receive_rewritten_description(result);
         }
     }
 
@@ -371,36 +364,6 @@ impl App {
         match command {
             Command::OpenWorkspace => self.request_action(PendingAction::Open),
             Command::OpenPath(path) => self.request_action(PendingAction::OpenPath(path)),
-            Command::RewriteDescription { name, description } => {
-                let request = self.codex.can_rewrite_description().and_then(|()| {
-                    crate::description::DescriptionRewriteRequest::new(&name, &description)
-                });
-                match request {
-                    Ok(request) => {
-                        self.codex.rewrite_description(request, &self.codex_default_root);
-                        self.status = None;
-                        self.status_is_error = false;
-                    }
-                    Err(error) => self.set_error(error),
-                }
-            }
-            Command::CreateWebsite { name, description } => {
-                let request = self.codex.can_create_website().and_then(|()| {
-                    crate::website::WebsiteRequest::prepare(
-                        &name,
-                        &description,
-                        &self.codex_default_root,
-                    )
-                });
-                match request {
-                    Ok(request) => {
-                        self.codex.create_website(request);
-                        self.status = None;
-                        self.status_is_error = false;
-                    }
-                    Err(error) => self.set_error(error),
-                }
-            }
             Command::Save => self.save(),
             Command::SaveAs => self.save_as(),
             Command::CloseWorkspace => self.request_action(PendingAction::CloseWorkspace),
@@ -469,11 +432,14 @@ impl App {
             return AppWindowAction::None;
         }
         if window == AppWindow::Wizard {
-            let finished = self.wizard.ui(ui);
-            return if finished {
-                AppWindowAction::Close
-            } else {
-                AppWindowAction::None
+            return match self.wizard.ui(ui, &mut self.codex, &self.codex_default_root) {
+                WizardAction::Finished => AppWindowAction::Close,
+                WizardAction::WebsiteStarted => {
+                    self.status = None;
+                    self.status_is_error = false;
+                    AppWindowAction::FocusMain
+                }
+                WizardAction::None => AppWindowAction::None,
             };
         }
         let mut settings = false;
@@ -503,6 +469,7 @@ impl App {
 
     pub fn app_window_closed(&mut self, window: AppWindow) {
         if window == AppWindow::Wizard {
+            self.codex.abandon_description_rewrite();
             self.wizard = Wizard::default();
         }
     }

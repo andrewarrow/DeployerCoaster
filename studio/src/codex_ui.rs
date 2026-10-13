@@ -165,6 +165,7 @@ impl Codex {
         let prompt = request.prompt.clone();
         self.description_rewrite = Some(request);
         self.start_generation(prompt);
+        self.open = false;
     }
 
     fn start_generation(&mut self, prompt: String) {
@@ -187,6 +188,75 @@ impl Codex {
 
     pub(crate) fn take_rewritten_description(&mut self) -> Option<RewrittenDescription> {
         self.rewritten_description.take()
+    }
+
+    pub(crate) fn abandon_description_rewrite(&mut self) {
+        if self.description_rewrite.is_some() {
+            self.return_to_workspace();
+            self.rewritten_description = None;
+            self.draft.clear();
+            self.messages.clear();
+            self.open = false;
+            self.restart();
+        }
+    }
+
+    /// The wizard owns the rewrite controls; keep its output and connection
+    /// feedback compact, without exposing the prompt or chat composer.
+    pub(crate) fn description_rewrite_ui(&mut self, ui: &mut egui::Ui) {
+        if let Some(error) = &self.error {
+            ui.add(
+                egui::Label::new(egui::RichText::new(error).color(ui.visuals().error_fg_color))
+                    .wrap(),
+            );
+        } else {
+            ui.horizontal_wrapped(|ui| {
+                if self.checking || self.opening || self.busy || self.login_pending {
+                    ui.spinner();
+                }
+                ui.label(if self.login_pending {
+                    "Finish signing in with ChatGPT in your browser."
+                } else if self.checking || self.opening {
+                    "Starting Codex…"
+                } else if self.busy {
+                    "Codex is rewriting the description…"
+                } else if self.account.is_none() && self.auto_send {
+                    "Connect ChatGPT to rewrite the description."
+                } else if self.auto_send {
+                    "Starting Codex…"
+                } else {
+                    "The rewrite stopped. Try again."
+                });
+            });
+        }
+        if !self.activity.is_empty() {
+            ui.add(egui::Label::new(egui::RichText::new(&self.activity).small()).truncate())
+                .on_hover_text(&self.activity);
+        }
+        if let Some(message) = self.messages.iter().rev().find(|message| !message.user) {
+            let preview = message.text.chars().rev().take(600).collect::<String>()
+                .chars().rev().collect::<String>();
+            egui::ScrollArea::vertical()
+                .id_salt("wizard_codex_output")
+                .max_height(120.0)
+                .auto_shrink([false, true])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    ui.add(egui::Label::new(egui::RichText::new(preview).small()).wrap());
+                });
+        }
+        if self.available && self.account.is_none() && !self.checking && !self.login_pending
+            && self.error.is_none() && ui.button("Connect ChatGPT").clicked()
+        {
+            self.begin_login();
+        }
+        if !self.busy && (self.error.is_some() || !self.auto_send)
+            && ui.add(egui::Button::new("Retry rewrite").min_size(egui::vec2(112.0, 44.0))).clicked()
+            && let Some(request) = self.description_rewrite.clone()
+        {
+            let root = self.root.clone();
+            self.rewrite_description(request, &root);
+        }
     }
 
     /// A completed or interrupted turn may have written workspace files.
@@ -306,7 +376,7 @@ impl Codex {
                 CodexEvent::Unavailable(error) => self.unavailable(error),
             }
         }
-        if self.open
+        if (self.open || self.auto_send)
             && self.account.is_some()
             && !self.ready
             && !self.opening

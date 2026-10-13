@@ -151,16 +151,6 @@ impl Dashboard {
         }
     }
 
-    pub(crate) fn receive_rewritten_description(
-        &mut self,
-        name: &str,
-        original: &str,
-        rewritten: &str,
-    ) -> Result<(), String> {
-        self.names
-            .receive_rewritten_description(name, original, rewritten)
-    }
-
     pub(crate) fn ui(
         &mut self,
         ui: &mut Ui,
@@ -281,7 +271,7 @@ impl Dashboard {
             )
             .show(ui, |ui| match self.navigation {
                 Section::Names => {
-                    command = self.names.ui(ui);
+                    self.names.ui(ui);
                 }
                 Section::Domains => {
                     if dynadot.domains_ui(ui) {

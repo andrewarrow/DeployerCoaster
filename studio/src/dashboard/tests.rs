@@ -104,86 +104,17 @@ fn names_page_adds_locally_and_fits_supported_sizes() {
         let pos = label_position(&output, "Add");
         output = click(&mut dashboard, pos, vec![]);
         label_position(&output, "1 name");
-        let create = label_position(&output, "Create website");
-        output = click(&mut dashboard, create, vec![]);
-        assert!(
-            action.borrow().is_none(),
-            "a new name without a rewritten description must disable creation"
-        );
-        let pos = label_position(&output, "Description");
-        output = click(&mut dashboard, pos, vec![]);
-        let brief = "A thoughtful field journal — café 🌿\n\n".to_owned()
-            + &"Long pasted product detail. ".repeat(80);
-        let editor = label_position(
-            &output,
-            "Describe the product, audience, tone, and useful details.",
-        );
-        output = click(
-            &mut dashboard,
-            editor,
-            vec![egui::Event::Paste(brief.clone())],
-        );
-        let create = label_position(&output, "Create website");
-        let _ = click(&mut dashboard, create, vec![]);
-        assert!(
-            action.borrow().is_none(),
-            "a dirty description must disable creation"
-        );
-        let rewrite = label_position(&output, "Rewrite description");
-        let _ = click(&mut dashboard, rewrite, vec![]);
-        assert!(
-            action.borrow().is_none(),
-            "a dirty original description must disable rewriting"
-        );
-        let pos = label_position(&output, "Save description");
-        output = click(&mut dashboard, pos, vec![]);
-        label_position(&output, "Description saved.");
-        label_position(&output, "Original description");
-        label_position(&output, "Rewritten description");
-        label_position(&output, "No rewritten description yet.");
-
-        let create = label_position(&output, "Create website");
-        output = click(&mut dashboard, create, vec![]);
-        assert!(
-            action.borrow().is_none(),
-            "a saved original without a rewritten description must disable creation"
-        );
-
-        let rewrite = label_position(&output, "Rewrite description");
-        let _ = click(&mut dashboard, rewrite, vec![]);
-        assert!(matches!(
-            action.borrow().as_ref(),
-            Some(Command::RewriteDescription { name: selected, description })
-                if selected == name.trim() && description == &brief
-        ));
-        action.borrow_mut().take();
-        let rewritten = format!("A useful website brief for {}.", name.trim());
-        dashboard
-            .receive_rewritten_description(name.trim(), &brief, &rewritten)
-            .unwrap();
-        output = click(&mut dashboard, pos2(width - 1.0, height - 1.0), vec![]);
-        label_position(&output, "Original description");
-        label_position(&output, "Rewritten description");
-        label_position(
-            &output,
-            &format!("{} / 3999 characters", rewritten.chars().count()),
-        );
-        label_position(&output, &rewritten);
-
+        assert!(!output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, Shape::Text(text) if matches!(text.galley.text(), "Create website" | "Description" | "Rewrite description"))
+        }), "description and website creation controls now belong to the wizard");
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved[0]["name"], name.trim());
-        assert_eq!(saved[0]["description"], brief);
-        assert_eq!(saved[0]["rewritten_description"], rewritten);
-
         dashboard.names = names::Names::from_path(path);
         output = click(&mut dashboard, pos2(width - 1.0, height - 1.0), vec![]);
         label_position(&output, "1 name");
-        let pos = label_position(&output, "Create website");
-        let _ = click(&mut dashboard, pos, vec![]);
-        assert!(
-            matches!(action.borrow().as_ref(), Some(Command::CreateWebsite { name: selected, description }) if selected == name.trim() && description == &rewritten)
-        );
+        assert!(action.borrow().is_none());
+
     }
 }
 
