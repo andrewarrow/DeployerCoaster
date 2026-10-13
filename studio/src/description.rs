@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
 pub(crate) struct DescriptionRewriteRequest {
@@ -7,7 +7,7 @@ pub(crate) struct DescriptionRewriteRequest {
     pub prompt: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct RewrittenDescription {
     pub name: String,
     pub original: String,

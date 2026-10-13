@@ -33,6 +33,51 @@ fn test_codex() -> Codex {
 }
 
 #[test]
+fn rewrite_retry_requests_saved_inputs_after_restart() {
+    let mut codex = Codex::test_disconnected(PathBuf::from("/unused"));
+    let ctx = egui::Context::default();
+    let mut button = egui::Pos2::ZERO;
+    let mut retry = false;
+    for phase in 0..4 {
+        let events = if phase >= 2 {
+            vec![
+                egui::Event::PointerMoved(button),
+                egui::Event::PointerButton {
+                    pos: button,
+                    button: egui::PointerButton::Primary,
+                    pressed: phase == 2,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        } else {
+            vec![]
+        };
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(560.0, 400.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| retry |= codex.description_rewrite_ui(ui),
+        );
+        if phase < 2 {
+            button = output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "Retry rewrite" => {
+                    Some(text.pos + text.galley.size() * 0.5)
+                }
+                _ => None,
+            }).expect("Retry must be available without an in-memory request");
+        }
+    }
+    assert!(retry);
+    assert!(codex.description_rewrite.is_none());
+    assert!(!codex.auto_send && !codex.busy);
+}
+
+#[test]
 fn chat_keeps_composer_visible_and_content_in_bounds() {
     for dark in [true, false] {
         for (width, height) in [

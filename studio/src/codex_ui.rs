@@ -202,8 +202,9 @@ impl Codex {
     }
 
     /// The wizard owns the rewrite controls; keep its output and connection
-    /// feedback compact, without exposing the prompt or chat composer.
-    pub(crate) fn description_rewrite_ui(&mut self, ui: &mut egui::Ui) {
+    /// feedback compact, without exposing the prompt or chat composer. Returns
+    /// true when a retry needs the wizard's saved inputs after a restart.
+    pub(crate) fn description_rewrite_ui(&mut self, ui: &mut egui::Ui) -> bool {
         if let Some(error) = &self.error {
             ui.add(
                 egui::Label::new(egui::RichText::new(error).color(ui.visuals().error_fg_color))
@@ -250,13 +251,14 @@ impl Codex {
         {
             self.begin_login();
         }
-        if !self.busy && (self.error.is_some() || !self.auto_send)
-            && ui.add(egui::Button::new("Retry rewrite").min_size(egui::vec2(112.0, 44.0))).clicked()
-            && let Some(request) = self.description_rewrite.clone()
-        {
+        let retry = !self.busy && (self.error.is_some() || !self.auto_send)
+            && ui.add(egui::Button::new("Retry rewrite").min_size(egui::vec2(112.0, 44.0))).clicked();
+        if retry && let Some(request) = self.description_rewrite.clone() {
             let root = self.root.clone();
             self.rewrite_description(request, &root);
+            return false;
         }
+        retry
     }
 
     /// A completed or interrupted turn may have written workspace files.

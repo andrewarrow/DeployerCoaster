@@ -123,7 +123,7 @@ impl App {
             apple_store: crate::apple::AppleStore::default(),
             dynadot: crate::dynadot::Dynadot::load(),
             requested_app_windows: Vec::new(),
-            wizard: Wizard::default(),
+            wizard: Wizard::load(),
         };
         if let Some(path) = initial_path {
             app.open_path(path);
@@ -470,7 +470,6 @@ impl App {
     pub fn app_window_closed(&mut self, window: AppWindow) {
         if window == AppWindow::Wizard {
             self.codex.abandon_description_rewrite();
-            self.wizard = Wizard::default();
         }
     }
 
@@ -887,6 +886,31 @@ mod tests {
         app.command(Command::AppleSettings);
         assert!(app.settings_section == SettingsSection::Apple);
         assert_eq!(app.take_app_window_request(), Some(AppWindow::Settings));
+    }
+
+    #[test]
+    fn closing_and_reopening_wizard_preserves_review_progress() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("wizard.json");
+        let saved = serde_json::json!({
+            "step": 3,
+            "app_name": "Example",
+            "original_description": "Original description",
+            "rewritten_description": {
+                "name": "Example",
+                "original": "Original description",
+                "description": "Example rewritten description"
+            },
+            "website_started": false
+        });
+        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let mut app = app_with_workspace(Workspace::new());
+        app.wizard = Wizard::from_path(path.clone());
+        app.app_window_closed(AppWindow::Wizard);
+        app.command(Command::Wizard);
+        assert_eq!(app.take_app_window_request(), Some(AppWindow::Wizard));
+        assert_eq!(serde_json::to_value(&app.wizard).unwrap(), saved);
+        assert_eq!(serde_json::to_value(Wizard::from_path(path)).unwrap(), saved);
     }
 
     #[test]
