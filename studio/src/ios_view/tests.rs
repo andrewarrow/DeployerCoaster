@@ -4,7 +4,7 @@ use serde_json::json;
 
 fn fixture() -> AppDetails {
     AppDetails {
-        app: json!({"id": "123", "attributes": {"bundleId": "com.example.long.application.identifier", "sku": "example", "primaryLocale": "en-US"}}),
+        app: json!({"id": "123", "attributes": {"bundleId": "com.example.this.is.a.deliberately.long.bundle.identifier.with.several.segments.to.check.wrapping.behavior", "sku": "example", "primaryLocale": "en-US"}}),
         info: Some(
             json!({"attributes": {"state": "PREPARE_FOR_SUBMISSION"}, "relationships": {"primaryCategory": {"data": {"id": "UTILITIES"}}}}),
         ),
@@ -12,7 +12,7 @@ fn fixture() -> AppDetails {
             json!({"attributes": {"versionString": "2.0", "appVersionState": "PREPARE_FOR_SUBMISSION", "copyright": "2026 Example", "createdDate": "2026-10-13T12:00:00Z"}}),
         ),
         info_localizations: vec![
-            json!({"attributes": {"locale": "en-US", "name": "A long localized application name with several words", "subtitle": "An English subtitle", "privacyPolicyUrl": "https://example.com/a/very/long/privacy/policy/address"}}),
+            json!({"attributes": {"locale": "en-US", "name": "A long localized application name with several words", "subtitle": "An English subtitle", "privacyPolicyUrl": "https://example.com/a/very/long/privacy/policy/address/with/a/path/that/keeps/going/and/going/without/a/short/word-break"}}),
         ],
         version_localizations: vec![
             json!({"attributes": {"locale": "en-US", "description": "An English description with multiple paragraphs.\n\nThis is another paragraph with enough words to exercise wrapping in narrow windows.", "keywords": "example,app,test", "promotionalText": "Try our latest features", "whatsNew": "New features", "supportUrl": "https://example.com/support"}}),
@@ -119,32 +119,59 @@ fn details_wrap_within_the_right_pane_at_supported_sizes_and_themes() {
                 },
             );
             let credentials = AppleCredentials::test_credentials("test");
-            let output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, height))),
-                    ..Default::default()
-                },
-                |ui| {
-                    egui::Panel::left("tree").exact_size(240.0).show(ui, |_| {});
-                    egui::CentralPanel::default().show(ui, |ui| {
-                        view.ui(
-                            ui,
-                            Some(("123", "An application with a long name that wraps")),
-                            Some(&credentials),
-                        );
-                    });
-                },
-            );
-            let labels = texts(&output);
-            assert!(labels.contains(&"Bundle ID"));
-            assert!(labels.contains(&"en-US"));
-            assert!(labels.contains(&"English localizations"));
-            assert!(labels.contains(&"An English subtitle"));
+            let mut render = |height| {
+                ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, height))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        if width < 640.0 {
+                            egui::Panel::top("tree").exact_size(32.0).show(ui, |ui| {
+                                ui.label("Apps");
+                            });
+                        } else {
+                            egui::Panel::left("tree").exact_size(240.0).show(ui, |_| {});
+                        }
+                        egui::CentralPanel::default().show(ui, |ui| {
+                            view.ui(
+                                ui,
+                                Some(("123", "An application with a long name that wraps")),
+                                Some(&credentials),
+                            );
+                        });
+                    },
+                )
+            };
+            let output = render(height);
+            assert!(texts(&output).contains(&"Bundle ID"));
+            for shape in &output.shapes {
+                if let Shape::Text(text) = &shape.shape {
+                    assert!(
+                        text.pos.x + text.galley.size().x <= width + 1.0,
+                        "overflow at {width}: {} (right {})",
+                        text.galley.text(),
+                        text.pos.x + text.galley.size().x
+                    );
+                }
+            }
+
+            // Render the full scroll content at each tested width so lower sections and long
+            // values are included in the overflow check as well.
+            let full_output = render(4000.0);
+            let full_labels = texts(&full_output);
+            assert!(full_labels.contains(&"Bundle ID"));
+            assert!(full_labels.contains(&"App information"));
+            assert!(full_labels.contains(&"iOS version"));
+            assert!(full_labels.contains(&"English localizations"));
+            assert!(full_labels.contains(&"Links & privacy"));
+            assert!(full_labels.contains(&"en-US"));
+            assert!(full_labels.contains(&"An English subtitle"));
             assert!(
                 view.job.is_none(),
                 "cached selection must not send requests"
             );
-            for shape in &output.shapes {
+            for shape in &full_output.shapes {
                 if let Shape::Text(text) = &shape.shape {
                     assert!(
                         text.pos.x + text.galley.size().x <= width + 1.0,
@@ -184,6 +211,7 @@ fn loading_errors_and_empty_localizations_have_compact_feedback() {
         Entry {
             data: Some(AppDetails {
                 app: json!({"id": "123"}),
+                warnings: vec!["iOS version: Apple returned no version record.".into()],
                 ..Default::default()
             }),
             error: Some("Refresh failed".into()),
@@ -195,6 +223,19 @@ fn loading_errors_and_empty_localizations_have_compact_feedback() {
     let labels = texts(&output);
     assert!(labels.contains(&"Refresh failed"));
     assert!(labels.contains(&"Previously loaded details are shown."));
+    assert!(labels.contains(&"iOS version: Apple returned no version record."));
     assert!(labels.contains(&"No English localization is available."));
+    view.cache
+        .get_mut("123")
+        .unwrap()
+        .data
+        .as_mut()
+        .unwrap()
+        .warnings
+        .clear();
+    let output = ctx.run_ui(input(), |ui| {
+        view.ui(ui, Some(("123", "Example")), Some(&credentials))
+    });
+    let labels = texts(&output);
     assert!(labels.contains(&"No iOS App Store version is available."));
 }

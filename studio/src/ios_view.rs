@@ -16,9 +16,14 @@ use crate::apple::{
     api::AppleApi,
     details::{self, AppDetails, attr, state},
 };
+use crate::dashboard::Icon;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "../target/ios_visual_preview.rs"]
+mod visual_preview;
 
 struct Job {
     result: Receiver<Result<AppDetails, String>>,
@@ -128,51 +133,76 @@ impl IosView {
             .id_salt(("ios_app_details", app_id))
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.set_max_width(ui.available_width().min(800.0));
-                ui.horizontal_wrapped(|ui| {
-                    ui.add(
-                        Label::new(
-                            RichText::new(if name.is_empty() { app_id } else { name }).heading(),
-                        )
-                        .wrap(),
-                    );
-                    if ui
-                        .add_enabled(self.job.is_none(), egui::Button::new("Refresh"))
-                        .clicked()
-                    {
-                        self.start(app_id, credentials.clone(), ui.ctx());
-                    }
-                });
-                if self.job.is_some() {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(
-                            if self
-                                .cache
-                                .get(app_id)
-                                .is_some_and(|entry| entry.data.is_some())
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::same(16))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width().min(1040.0));
+                        ui.add_space(8.0);
+                        ui.horizontal_top(|ui| {
+                            let title_width =
+                                (ui.available_width() - 80.0 - ui.spacing().item_spacing.x)
+                                    .max(0.0);
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(title_width, 0.0),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    ui.set_width(title_width);
+                                    ui.add(
+                                        Label::new(
+                                            RichText::new(if name.is_empty() {
+                                                app_id
+                                            } else {
+                                                name
+                                            })
+                                            .heading(),
+                                        )
+                                        .wrap(),
+                                    );
+                                },
+                            );
+                            if ui
+                                .add_enabled(
+                                    self.job.is_none(),
+                                    egui::Button::new("Refresh").min_size(egui::vec2(80.0, 36.0)),
+                                )
+                                .clicked()
                             {
-                                "Refreshing app details…"
-                            } else {
-                                "Loading app details…"
-                            },
-                        );
-                    });
-                }
-                if let Some(entry) = self.cache.get(app_id) {
-                    if let Some(error) = &entry.error {
-                        ui.add(
-                            Label::new(RichText::new(error).color(ui.visuals().error_fg_color))
-                                .wrap(),
-                        );
-                        if entry.data.is_some() {
-                            ui.label("Previously loaded details are shown.");
+                                self.start(app_id, credentials.clone(), ui.ctx());
+                            }
+                        });
+                        if self.job.is_some() {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(
+                                    if self
+                                        .cache
+                                        .get(app_id)
+                                        .is_some_and(|entry| entry.data.is_some())
+                                    {
+                                        "Refreshing app details…"
+                                    } else {
+                                        "Loading app details…"
+                                    },
+                                );
+                            });
                         }
-                    }
-                    if let Some(details) = &entry.data {
-                        details_ui(ui, details);
-                    }
-                }
+                        if let Some(entry) = self.cache.get(app_id) {
+                            if let Some(error) = &entry.error {
+                                ui.add(
+                                    Label::new(
+                                        RichText::new(error).color(ui.visuals().error_fg_color),
+                                    )
+                                    .wrap(),
+                                );
+                                if entry.data.is_some() {
+                                    ui.label("Previously loaded details are shown.");
+                                }
+                            }
+                            if let Some(details) = &entry.data {
+                                details_ui(ui, details);
+                            }
+                        }
+                    });
             });
     }
 }
@@ -181,49 +211,40 @@ fn details_ui(ui: &mut Ui, details: &AppDetails) {
     for warning in &details.warnings {
         ui.add(Label::new(RichText::new(warning).color(ui.visuals().error_fg_color)).wrap());
     }
-    ui.add_space(8.0);
-    row(ui, "App ID", details.app["id"].as_str().unwrap_or_default());
-    fields(
-        ui,
-        &details.app,
-        &[
-            ("Bundle ID", "bundleId"),
-            ("SKU", "sku"),
-            ("Primary locale", "primaryLocale"),
-        ],
-    );
-    if let Some(info) = &details.info {
-        row(ui, "App information", &readable(state(info)));
-        for (label, field) in [
-            ("Primary category", "primaryCategory"),
-            ("Secondary category", "secondaryCategory"),
-        ] {
-            let category = info["relationships"][field]["data"]["id"]
-                .as_str()
-                .unwrap_or_default();
-            row(ui, label, &readable(category));
-        }
-    }
-    ui.add_space(8.0);
-    ui.label(RichText::new("iOS version").strong());
-    if let Some(version) = &details.version {
-        row(ui, "Version", attr(version, "versionString"));
-        row(ui, "Status", &readable(state(version)));
-        fields(
-            ui,
-            version,
-            &[("Copyright", "copyright"), ("Created", "createdDate")],
-        );
-    } else if !details
-        .warnings
-        .iter()
-        .any(|warning| warning.starts_with("iOS version:"))
-    {
-        ui.label("No iOS App Store version is available.");
+    ui.add_space(16.0);
+    if ui.available_width() >= 740.0 {
+        let gap = 24.0;
+        let width = (ui.available_width() - gap) / 2.0;
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(width);
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    app_information(ui, details);
+                },
+            );
+            ui.add_space(gap);
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(width);
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    ios_version(ui, details);
+                },
+            );
+        });
+    } else {
+        app_information(ui, details);
+        ui.add_space(20.0);
+        ios_version(ui, details);
     }
 
-    ui.add_space(8.0);
-    ui.label(RichText::new("English localizations").strong());
+    ui.add_space(24.0);
+    section_heading(ui, "English localizations", Icon::Globe, Accent::Violet);
     let mut locales: Vec<_> = details
         .info_localizations
         .iter()
@@ -242,49 +263,196 @@ fn details_ui(ui: &mut Ui, details: &AppDetails) {
         }
         return;
     }
-    for locale in locales {
-        ui.add_space(8.0);
-        ui.label(RichText::new(locale).strong());
-        if let Some(info) = details
+    for (index, locale) in locales.into_iter().enumerate() {
+        if index > 0 {
+            ui.add_space(8.0);
+        }
+        ui.label(RichText::new(locale).size(15.0).strong());
+        let info = details
             .info_localizations
             .iter()
-            .find(|resource| attr(resource, "locale") == locale)
-        {
-            fields(
-                ui,
-                info,
-                &[
-                    ("Name", "name"),
-                    ("Subtitle", "subtitle"),
-                    ("Privacy policy URL", "privacyPolicyUrl"),
-                    ("Privacy choices URL", "privacyChoicesUrl"),
-                ],
-            );
-        }
-        if let Some(version) = details
+            .find(|resource| attr(resource, "locale") == locale);
+        let version = details
             .version_localizations
             .iter()
-            .find(|resource| attr(resource, "locale") == locale)
-        {
-            fields(
-                ui,
-                version,
-                &[
-                    ("Description", "description"),
-                    ("Keywords", "keywords"),
-                    ("Promotional text", "promotionalText"),
-                    ("What's new", "whatsNew"),
-                    ("Support URL", "supportUrl"),
-                    ("Marketing URL", "marketingUrl"),
-                ],
-            );
+            .find(|resource| attr(resource, "locale") == locale);
+        if ui.available_width() >= 740.0 {
+            let gap = 24.0;
+            let width = ui.available_width() - gap;
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.allocate_ui_with_layout(
+                    egui::vec2(width * 2.0 / 3.0, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        let column_width = width * 2.0 / 3.0;
+                        ui.set_width(column_width);
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        localization_listing(ui, info, version);
+                    },
+                );
+                ui.add_space(gap);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(width / 3.0, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        let column_width = width / 3.0;
+                        ui.set_width(column_width);
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        localization_links(ui, info, version);
+                    },
+                );
+            });
+        } else {
+            localization_listing(ui, info, version);
+            ui.add_space(16.0);
+            localization_links(ui, info, version);
         }
     }
+}
+
+fn app_information(ui: &mut Ui, details: &AppDetails) {
+    section_heading(ui, "App information", Icon::Apps, Accent::Blue);
+    row(ui, "App ID", details.app["id"].as_str().unwrap_or_default());
+    fields(
+        ui,
+        &details.app,
+        &[
+            ("Bundle ID", "bundleId"),
+            ("SKU", "sku"),
+            ("Primary locale", "primaryLocale"),
+        ],
+    );
+    if let Some(info) = &details.info {
+        row(ui, "Status", &readable(state(info)));
+        for (label, field) in [
+            ("Primary category", "primaryCategory"),
+            ("Secondary category", "secondaryCategory"),
+        ] {
+            let category = info["relationships"][field]["data"]["id"]
+                .as_str()
+                .unwrap_or_default();
+            row(ui, label, &readable(category));
+        }
+    }
+}
+
+fn ios_version(ui: &mut Ui, details: &AppDetails) {
+    section_heading(ui, "iOS version", Icon::Phone, Accent::Green);
+    if let Some(version) = &details.version {
+        row(ui, "Version", attr(version, "versionString"));
+        row(ui, "Status", &readable(state(version)));
+        fields(
+            ui,
+            version,
+            &[("Copyright", "copyright"), ("Created", "createdDate")],
+        );
+    } else if !details
+        .warnings
+        .iter()
+        .any(|warning| warning.starts_with("iOS version:"))
+    {
+        ui.label("No iOS App Store version is available.");
+    }
+}
+
+fn localization_listing(ui: &mut Ui, info: Option<&Value>, version: Option<&Value>) {
+    if let Some(info) = info {
+        fields(ui, info, &[("Name", "name"), ("Subtitle", "subtitle")]);
+    }
+    if let Some(version) = version {
+        prose_fields(
+            ui,
+            version,
+            &[
+                ("Description", "description"),
+                ("Promotional text", "promotionalText"),
+                ("What's new", "whatsNew"),
+                ("Keywords", "keywords"),
+            ],
+        );
+    }
+}
+
+fn localization_links(ui: &mut Ui, info: Option<&Value>, version: Option<&Value>) {
+    section_heading(ui, "Links & privacy", Icon::Shield, Accent::Amber);
+    if let Some(info) = info {
+        fields(
+            ui,
+            info,
+            &[
+                ("Privacy policy", "privacyPolicyUrl"),
+                ("Privacy choices", "privacyChoicesUrl"),
+            ],
+        );
+    }
+    if let Some(version) = version {
+        fields(
+            ui,
+            version,
+            &[("Support", "supportUrl"), ("Marketing", "marketingUrl")],
+        );
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Accent {
+    Blue,
+    Green,
+    Violet,
+    Amber,
+}
+
+fn section_heading(ui: &mut Ui, title: &str, icon: Icon, accent: Accent) {
+    let (color, tint) = if ui.visuals().dark_mode {
+        let color = match accent {
+            Accent::Blue => egui::Color32::from_rgb(111, 178, 255),
+            Accent::Green => egui::Color32::from_rgb(100, 216, 157),
+            Accent::Violet => egui::Color32::from_rgb(188, 157, 255),
+            Accent::Amber => egui::Color32::from_rgb(255, 190, 105),
+        };
+        (color, color.gamma_multiply(0.16))
+    } else {
+        let color = match accent {
+            Accent::Blue => egui::Color32::from_rgb(36, 105, 193),
+            Accent::Green => egui::Color32::from_rgb(28, 126, 77),
+            Accent::Violet => egui::Color32::from_rgb(111, 77, 183),
+            Accent::Amber => egui::Color32::from_rgb(157, 97, 21),
+        };
+        (color, color.gamma_multiply(0.12))
+    };
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 8.0, tint);
+        icon.paint(ui, rect.min + egui::vec2(7.0, 7.0), 18.0, color);
+        ui.add_space(8.0);
+        ui.add(Label::new(RichText::new(title).size(16.0).strong()).wrap());
+    });
+    ui.add_space(8.0);
 }
 
 fn fields(ui: &mut Ui, resource: &Value, fields: &[(&str, &str)]) {
     for (label, field) in fields {
         row(ui, label, attr(resource, field));
+    }
+}
+
+fn prose_fields(ui: &mut Ui, resource: &Value, fields: &[(&str, &str)]) {
+    for (label, field) in fields {
+        let value = attr(resource, field);
+        let value = if value.trim().is_empty() {
+            "—"
+        } else {
+            value
+        };
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(*label)
+                .size(12.0)
+                .strong()
+                .color(ui.visuals().weak_text_color()),
+        );
+        ui.add(Label::new(value).wrap().selectable(true));
     }
 }
 
@@ -309,16 +477,24 @@ fn row(ui: &mut Ui, label: &str, value: &str) {
     } else {
         value
     };
-    if ui.available_width() < 480.0 {
-        ui.label(label);
-        ui.add(Label::new(value).wrap().selectable(true));
+    if ui.available_width() < 320.0 {
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.add(Label::new(RichText::new(label).color(ui.visuals().weak_text_color())).wrap());
+            ui.add(Label::new(value).wrap().selectable(true));
+        });
     } else {
+        let label_width = 128.0;
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(
-                egui::vec2(144.0, 0.0),
+                egui::vec2(label_width, 0.0),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
-                    ui.label(label);
+                    ui.set_width(label_width);
+                    ui.add(
+                        Label::new(RichText::new(label).color(ui.visuals().weak_text_color()))
+                            .wrap(),
+                    );
                 },
             );
             ui.add(Label::new(value).wrap().selectable(true));

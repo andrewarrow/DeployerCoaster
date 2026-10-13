@@ -89,7 +89,7 @@ pub(super) fn text(
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum Icon {
+pub(crate) enum Icon {
     Home,
     Apps,
     Globe,
@@ -113,7 +113,7 @@ pub(super) enum Icon {
 }
 
 impl Icon {
-    pub(super) fn paint(self, ui: &Ui, origin: Pos2, size: f32, color: Color32) {
+    pub(crate) fn paint(self, ui: &Ui, origin: Pos2, size: f32, color: Color32) {
         let p = ui.painter();
         let point = |x: f32, y: f32| origin + vec2(x, y) * (size / 24.0);
         let stroke = Stroke::new((size / 14.0).max(1.1), color);

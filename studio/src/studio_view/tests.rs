@@ -255,3 +255,64 @@ fn app_rows_remain_visible_with_a_refresh_error() {
         1
     );
 }
+
+#[test]
+fn compact_navigation_leaves_room_for_details_and_closes_after_selecting_an_app() {
+    for theme in [egui::Theme::Light, egui::Theme::Dark] {
+        for (width, height) in [
+            (390.0, 844.0),
+            (768.0, 1024.0),
+            (1280.0, 800.0),
+            (1440.0, 900.0),
+        ] {
+            let ctx = egui::Context::default();
+            crate::style::configure(&ctx);
+            ctx.set_theme(theme);
+            ctx.style_mut_of(theme, |style| style.animation_time = 0.0);
+            let mut view = StudioView::default();
+            let mut content_rect = Rect::NOTHING;
+            let mut draw = |events| {
+                ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, height))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        view.navigation_panel(ui, |view, ui| {
+                            view.platform_tree(
+                                ui,
+                                Platform::Ios,
+                                vec![app(Platform::Ios, "Example app", "123")],
+                                status(false),
+                            );
+                        });
+                        egui::CentralPanel::default().show(ui, |ui| {
+                            content_rect = ui.max_rect();
+                            ui.label("App details");
+                        });
+                    },
+                )
+            };
+            let _ = draw(vec![]);
+            let output = draw(vec![]);
+            assert_eq!(
+                text_positions(&output, "Example app").len(),
+                1,
+                "{theme:?} at {width}"
+            );
+            click(&mut draw, text_positions(&output, "Example app")[0]);
+            let output = draw(vec![]);
+            if width < 640.0 {
+                assert!(text_positions(&output, "Example app").is_empty());
+                assert_eq!(text_positions(&output, "Apps").len(), 1);
+                click(&mut draw, text_positions(&output, "Apps")[0]);
+                let output = draw(vec![]);
+                assert_eq!(text_positions(&output, "Example app").len(), 1);
+            }
+            drop(draw);
+            assert_eq!(view.selected_app, Some((Platform::Ios, "123".into())));
+            assert!(content_rect.width() >= if width < 640.0 { 370.0 } else { width - 264.0 });
+        }
+    }
+}

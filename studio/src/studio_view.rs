@@ -38,26 +38,20 @@ impl StudioView {
         apple_store.prepare_dashboard(&ctx);
         play_store.prepare_dashboard(&ctx);
 
-        Panel::left("studio_platform_navigation")
-            .exact_size(ui.available_width().min(240.0))
-            .resizable(false)
-            .frame(Frame::side_top_panel(ui.style()).inner_margin(Margin::same(8)))
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    self.platform_tree(
-                        ui,
-                        Platform::Ios,
-                        apple_store.dashboard_apps(),
-                        apple_store.dashboard_status(),
-                    );
-                    self.platform_tree(
-                        ui,
-                        Platform::Android,
-                        play_store.dashboard_apps(),
-                        play_store.dashboard_status(),
-                    );
-                });
-            });
+        self.navigation_panel(ui, |view, ui| {
+            view.platform_tree(
+                ui,
+                Platform::Ios,
+                apple_store.dashboard_apps(),
+                apple_store.dashboard_status(),
+            );
+            view.platform_tree(
+                ui,
+                Platform::Android,
+                play_store.dashboard_apps(),
+                play_store.dashboard_status(),
+            );
+        });
 
         CentralPanel::default().show(ui, |ui| match self.platform {
             Platform::Ios => apple_store
@@ -67,6 +61,43 @@ impl StudioView {
                 crate::android_view::ui(ui);
             }
         });
+    }
+
+    fn navigation_panel(&mut self, ui: &mut Ui, show_tree: impl FnOnce(&mut Self, &mut Ui)) {
+        let frame = Frame::side_top_panel(ui.style()).inner_margin(Margin::same(8));
+        if ui.available_width() < 640.0 {
+            Panel::top("studio_compact_navigation")
+                .frame(frame)
+                .show(ui, |ui| {
+                    let previous_selection = self.selected_app.clone();
+                    let picker = egui::CollapsingHeader::new("Apps")
+                        .id_salt("studio_app_picker")
+                        .default_open(self.selected_app.is_none())
+                        .show_unindented(ui, |ui| {
+                            egui::ScrollArea::vertical()
+                                .max_height(240.0)
+                                .show(ui, |ui| show_tree(self, ui));
+                        });
+                    if self.selected_app.is_some()
+                        && self.selected_app != previous_selection
+                        && let Some(mut state) = egui::collapsing_header::CollapsingState::load(
+                            ui.ctx(),
+                            picker.header_response.id,
+                        )
+                    {
+                        state.set_open(false);
+                        state.store(ui.ctx());
+                    }
+                });
+        } else {
+            Panel::left("studio_platform_navigation")
+                .exact_size(240.0)
+                .resizable(false)
+                .frame(frame)
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| show_tree(self, ui));
+                });
+        }
     }
 
     fn platform_tree(

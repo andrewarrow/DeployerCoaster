@@ -10,6 +10,7 @@ use navigation::{Section, Tab};
 use product::metrics;
 #[cfg(test)]
 use product::services;
+pub(crate) use widgets::Icon;
 use widgets::*;
 
 use egui::{
