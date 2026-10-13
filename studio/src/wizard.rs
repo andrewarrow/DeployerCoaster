@@ -187,7 +187,6 @@ impl Wizard {
                         }
                     });
                 });
-            })
             });
         action
     }
