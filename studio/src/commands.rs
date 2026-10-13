@@ -13,6 +13,7 @@ pub enum Command {
     Settings,
     DynadotSettings,
     AppleSettings,
+    Wizard,
     Android,
     Apple,
     About,

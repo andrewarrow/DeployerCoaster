@@ -28,6 +28,7 @@ mod preferences;
 mod storage;
 mod style;
 mod website;
+mod wizard;
 mod workspace;
 
 use std::{error::Error, num::NonZeroU32, sync::Arc, time::Instant};
@@ -76,6 +77,8 @@ impl DesktopWindow {
                     .with_inner_size(if kind.is_some() {
                         if kind == Some(app::AppWindow::Settings) {
                             LogicalSize::new(820.0, 620.0)
+                        } else if kind == Some(app::AppWindow::Wizard) {
+                            LogicalSize::new(560.0, 400.0)
                         } else {
                             LogicalSize::new(640.0, 560.0)
                         }
@@ -198,12 +201,12 @@ impl Desktop {
             &desktop.window,
             false,
         );
-        let mut focus_settings = false;
+        let mut window_action = app::AppWindowAction::None;
         let output = desktop
             .context
             .run_ui(desktop.input.take_egui_input(&desktop.window), |ui| {
                 if let Some(kind) = desktop.kind {
-                    focus_settings = self.app.app_window_ui(kind, ui);
+                    window_action = self.app.app_window_ui(kind, ui);
                 } else {
                     self.app.ui(ui);
                 }
@@ -254,8 +257,16 @@ impl Desktop {
                     .map_or(deadline, |next| next.min(deadline)),
             );
         }
-        if focus_settings {
-            self.focus_main_window();
+        match window_action {
+            app::AppWindowAction::None => {}
+            app::AppWindowAction::FocusMain => self.focus_main_window(),
+            app::AppWindowAction::Close => {
+                if let Some(kind) = desktop.kind {
+                    self.app.app_window_closed(kind);
+                    self.windows.remove(index);
+                    return;
+                }
+            }
         }
         self.open_app_windows(event_loop);
         if self.app.should_quit() {
@@ -301,7 +312,8 @@ impl ApplicationHandler<Instant> for Desktop {
         }
         match event {
             WindowEvent::CloseRequested => {
-                if desktop.kind.is_some() {
+                if let Some(kind) = desktop.kind {
+                    self.app.app_window_closed(kind);
                     self.windows.remove(index);
                 } else {
                     self.app.command(commands::Command::Quit);

@@ -8,6 +8,7 @@ use crate::{
     metadata,
     play_store::PlayStore,
     preferences::{Appearance, Preferences},
+    wizard::Wizard,
     workspace::{WORKSPACE_EXTENSION, Workspace},
 };
 
@@ -44,6 +45,7 @@ impl SettingsSection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppWindow {
     Settings,
+    Wizard,
     Android,
     Apple,
 }
@@ -52,10 +54,18 @@ impl AppWindow {
     pub fn title(self) -> &'static str {
         match self {
             Self::Settings => "Settings",
+            Self::Wizard => "Wizard",
             Self::Android => "Android",
             Self::Apple => "Apple",
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppWindowAction {
+    None,
+    FocusMain,
+    Close,
 }
 
 pub struct App {
@@ -76,6 +86,7 @@ pub struct App {
     apple_store: crate::apple::AppleStore,
     dynadot: crate::dynadot::Dynadot,
     requested_app_windows: Vec<AppWindow>,
+    wizard: Wizard,
 }
 
 impl App {
@@ -112,6 +123,7 @@ impl App {
             apple_store: crate::apple::AppleStore::default(),
             dynadot: crate::dynadot::Dynadot::load(),
             requested_app_windows: Vec::new(),
+            wizard: Wizard::default(),
         };
         if let Some(path) = initial_path {
             app.open_path(path);
@@ -139,6 +151,11 @@ impl App {
         egui::Panel::top("app_menu").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
+                    if ui.button("Wizard").clicked() {
+                        selected_command = Some(Command::Wizard);
+                        ui.close();
+                    }
+                    ui.separator();
                     for (label, command) in
                         [("Android", Command::Android), ("Apple", Command::Apple)]
                     {
@@ -400,6 +417,7 @@ impl App {
                 self.settings_section = SettingsSection::Apple;
                 self.requested_app_windows.push(AppWindow::Settings);
             }
+            Command::Wizard => self.requested_app_windows.push(AppWindow::Wizard),
             Command::Android => self.requested_app_windows.push(AppWindow::Android),
             Command::Apple => self.requested_app_windows.push(AppWindow::Apple),
             Command::About => {
@@ -443,13 +461,20 @@ impl App {
         }
     }
 
-    /// Returns true when the main window should be focused before opening Settings.
-    pub fn app_window_ui(&mut self, window: AppWindow, ui: &mut egui::Ui) -> bool {
+    pub fn app_window_ui(&mut self, window: AppWindow, ui: &mut egui::Ui) -> AppWindowAction {
         self.poll_codex(ui.ctx());
         ui.ctx().set_theme(self.preferences.appearance.theme());
         if window == AppWindow::Settings {
             self.store_settings(ui);
-            return false;
+            return AppWindowAction::None;
+        }
+        if window == AppWindow::Wizard {
+            let finished = self.wizard.ui(ui);
+            return if finished {
+                AppWindowAction::Close
+            } else {
+                AppWindowAction::None
+            };
         }
         let mut settings = false;
         egui::CentralPanel::default()
@@ -462,13 +487,24 @@ impl App {
                         .set_reporting_vendor(self.apple.saved_vendor_number());
                     settings = self.apple_store.apps_ui(ui);
                 }
+                AppWindow::Wizard => unreachable!(),
                 AppWindow::Settings => unreachable!(),
             });
         if settings {
             self.settings_section = SettingsSection::Apple;
             self.requested_app_windows.push(AppWindow::Settings);
         }
-        settings
+        if settings {
+            AppWindowAction::FocusMain
+        } else {
+            AppWindowAction::None
+        }
+    }
+
+    pub fn app_window_closed(&mut self, window: AppWindow) {
+        if window == AppWindow::Wizard {
+            self.wizard = Wizard::default();
+        }
     }
 
     pub fn window_error(&mut self, window: AppWindow) {
@@ -833,6 +869,7 @@ mod tests {
             apple_store: crate::apple::AppleStore::default(),
             dynadot: crate::dynadot::Dynadot::default(),
             requested_app_windows: Vec::new(),
+            wizard: Wizard::default(),
         }
     }
 
