@@ -271,8 +271,8 @@ impl Dashboard {
             )
             .show(ui, |ui| match self.navigation {
                 Section::Names => {
-                    if let Some(name) = self.names.ui(ui) {
-                        command = Some(Command::CreateWebsite(name));
+                    if let Some((name, description)) = self.names.ui(ui) {
+                        command = Some(Command::CreateWebsite { name, description });
                     }
                 }
                 Section::Domains => {

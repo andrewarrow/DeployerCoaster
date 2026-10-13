@@ -12,7 +12,17 @@ fn names_page_adds_locally_and_fits_supported_sizes() {
                 }
                 _ => None,
             })
-            .unwrap_or_else(|| panic!("Missing label: {label}"))
+            .unwrap_or_else(|| {
+                let labels: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        Shape::Text(text) => Some(text.galley.text().to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                panic!("Missing label: {label}. Visible text: {labels:?}")
+            })
     }
 
     for (width, height) in [
@@ -34,7 +44,8 @@ fn names_page_adds_locally_and_fits_supported_sizes() {
         let mut dynadot = crate::dynadot::Dynadot::default();
         let ctx = egui::Context::default();
         crate::style::configure(&ctx);
-        let mut action = None;
+        ctx.all_styles_mut(|style| style.animation_time = 0.0);
+        let action = std::cell::RefCell::new(None);
         let mut render = |dashboard: &mut Dashboard, events| {
             ctx.run_ui(
                 egui::RawInput {
@@ -46,16 +57,17 @@ fn names_page_adds_locally_and_fits_supported_sizes() {
                     if let Some(command) =
                         dashboard.ui(ui, &mut play, &mut apple, &mut dynadot, true)
                     {
-                        action = Some(command);
+                        *action.borrow_mut() = Some(command);
                     }
                     assert!(
                         ui.min_rect().right() <= width,
-                        "Names overflow at {width}px"
+                        "Names overflow at {width}px: {:?}",
+                        ui.min_rect()
                     );
                 },
             )
         };
-        let mut click = |dashboard: &mut Dashboard, pos| {
+        let mut click = |dashboard: &mut Dashboard, pos, final_events| {
             for pressed in [true, false] {
                 let _ = render(
                     dashboard,
@@ -70,67 +82,63 @@ fn names_page_adds_locally_and_fits_supported_sizes() {
                     ],
                 );
             }
-            render(dashboard, vec![])
+            render(dashboard, final_events)
         };
-        let mut output = click(&mut dashboard, pos2(width - 1.0, height - 1.0));
+        let mut output = click(&mut dashboard, pos2(width - 1.0, height - 1.0), vec![]);
         label_position(&output, "0 names");
         label_position(&output, "You haven't added any names.");
         assert!(!output.shapes.iter().any(|shape| {
             matches!(&shape.shape, Shape::Text(text) if text.galley.text() == "Search apps or identifiers…" || text.galley.text() == "‹  My Apps" || text.galley.text() == "Websites")
         }));
         let pos = label_position(&output, "Add new name");
-        output = click(&mut dashboard, pos);
+        output = click(&mut dashboard, pos, vec![]);
         label_position(&output, "Name");
         let pos = label_position(&output, "Cancel");
-        output = click(&mut dashboard, pos);
+        output = click(&mut dashboard, pos, vec![]);
         label_position(&output, "0 names");
         assert!(!path.exists());
 
         let pos = label_position(&output, "Add new name");
-        let _ = click(&mut dashboard, pos);
         let name = "A long name with spaces and Unicode — café ".repeat(8);
-        output = render(&mut dashboard, vec![egui::Event::Text(name.clone())]);
+        output = click(&mut dashboard, pos, vec![egui::Event::Text(name.clone())]);
         let pos = label_position(&output, "Add");
-        for pressed in [true, false] {
-            let _ = render(
-                &mut dashboard,
-                vec![
-                    egui::Event::PointerMoved(pos),
-                    egui::Event::PointerButton {
-                        pos,
-                        button: egui::PointerButton::Primary,
-                        pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ],
-            );
-        }
-        output = render(&mut dashboard, vec![]);
+        output = click(&mut dashboard, pos, vec![]);
+        label_position(&output, "1 name");
+        let pos = label_position(&output, "Description");
+        output = click(&mut dashboard, pos, vec![]);
+        let brief = "A thoughtful field journal — café 🌿\n\n".to_owned()
+            + &"Long pasted product detail. ".repeat(80);
+        let editor = label_position(
+            &output,
+            "Describe the product, audience, tone, and useful details.",
+        );
+        output = click(
+            &mut dashboard,
+            editor,
+            vec![egui::Event::Paste(brief.clone())],
+        );
+        let create = label_position(&output, "Create website");
+        let _ = click(&mut dashboard, create, vec![]);
+        assert!(
+            action.borrow().is_none(),
+            "a dirty description must disable creation"
+        );
+        let pos = label_position(&output, "Save description");
+        output = click(&mut dashboard, pos, vec![]);
+        label_position(&output, "Description saved.");
+
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved[0]["name"], name.trim());
+        assert_eq!(saved[0]["description"], brief);
+
+        dashboard.names = names::Names::from_path(path);
+        output = click(&mut dashboard, pos2(width - 1.0, height - 1.0), vec![]);
         label_position(&output, "1 name");
         let pos = label_position(&output, "Create website");
-        for pressed in [true, false] {
-            let _ = render(
-                &mut dashboard,
-                vec![
-                    egui::Event::PointerMoved(pos),
-                    egui::Event::PointerButton {
-                        pos,
-                        button: egui::PointerButton::Primary,
-                        pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ],
-            );
-        }
-        assert_eq!(
-            serde_json::from_slice::<Vec<String>>(&std::fs::read(&path).unwrap()).unwrap(),
-            [name.trim()]
-        );
-        dashboard.names = names::Names::from_path(path);
-        output = render(&mut dashboard, vec![]);
-        label_position(&output, "1 name");
+        let _ = click(&mut dashboard, pos, vec![]);
         assert!(
-            matches!(action, Some(Command::CreateWebsite(selected)) if selected == name.trim())
+            matches!(action.borrow().as_ref(), Some(Command::CreateWebsite { name: selected, description }) if selected == name.trim() && description == &brief)
         );
     }
 }

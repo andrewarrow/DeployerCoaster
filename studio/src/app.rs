@@ -344,9 +344,13 @@ impl App {
         match command {
             Command::OpenWorkspace => self.request_action(PendingAction::Open),
             Command::OpenPath(path) => self.request_action(PendingAction::OpenPath(path)),
-            Command::CreateWebsite(name) => {
+            Command::CreateWebsite { name, description } => {
                 let request = self.codex.can_create_website().and_then(|()| {
-                    crate::website::WebsiteRequest::prepare(&name, &self.codex_default_root)
+                    crate::website::WebsiteRequest::prepare(
+                        &name,
+                        &description,
+                        &self.codex_default_root,
+                    )
                 });
                 match request {
                     Ok(request) => {
