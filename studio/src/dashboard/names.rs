@@ -85,7 +85,8 @@ impl Names {
         Ok(())
     }
 
-    pub(super) fn ui(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn ui(&mut self, ui: &mut egui::Ui) -> Option<String> {
+        let mut create_website = None;
         ui.horizontal_wrapped(|ui| {
             ui.heading("Names");
             if ui
@@ -155,23 +156,35 @@ impl Names {
         ));
         if self.entries.is_empty() {
             ui.label("You haven't added any names.");
-            return;
+            return None;
         }
         egui::ScrollArea::vertical()
             .id_salt("local_names")
             .show(ui, |ui| {
-                let width = ui.available_width().min(600.0);
+                let action_width = 132.0;
+                let width = (ui.available_width() - action_width - ui.spacing().item_spacing.x)
+                    .clamp(0.0, 600.0);
                 egui::Grid::new("names_list")
                     .striped(true)
-                    .min_row_height(36.0)
+                    .min_row_height(44.0)
                     .show(ui, |ui| {
                         for name in &self.entries {
-                            ui.add_sized([width, 36.0], egui::Label::new(name).truncate())
+                            ui.add_sized([width, 44.0], egui::Label::new(name).truncate())
                                 .on_hover_text(name);
+                            if ui
+                                .add_sized(
+                                    [action_width, 44.0],
+                                    egui::Button::new("Create website"),
+                                )
+                                .clicked()
+                            {
+                                create_website = Some(name.clone());
+                            }
                             ui.end_row();
                         }
                     });
             });
+        create_website
     }
 }
 

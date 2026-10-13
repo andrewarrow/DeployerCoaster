@@ -4,6 +4,8 @@ fn test_codex() -> Codex {
     Codex {
         client: None,
         root: PathBuf::from("/workspace/a-very-long-workspace-directory-name"),
+        website_root: None,
+        auto_send: false,
         account: Some(ChatGptAccount {
             email: Some("a-long-account-address@example.com".into()),
             plan_type: Some("plus".into()),
@@ -36,13 +38,20 @@ fn chat_keeps_composer_visible_and_content_in_bounds() {
             (1280.0, 800.0),
             (1440.0, 900.0),
         ] {
-            for failed in [false, true] {
+            for state in ["ready", "failed", "queued"] {
                 let mut codex = test_codex();
-                if failed {
+                if state == "failed" {
                     codex.error = Some(
                         "A long error explaining that the request could not be completed. "
                             .repeat(20),
                     );
+                } else if state == "queued" {
+                    codex.account = None;
+                    codex.ready = false;
+                    codex.auto_send = true;
+                    codex.draft =
+                        "A long website creation prompt with reference paths and requirements.\n"
+                            .repeat(40);
                 }
                 let ctx = egui::Context::default();
                 crate::style::configure(&ctx);
@@ -94,12 +103,90 @@ fn chat_keeps_composer_visible_and_content_in_bounds() {
                         .expect("composer must render");
                     assert!(
                         send.pos.y + send.galley.size().y <= height,
-                        "composer clipped at {width}x{height}, failed={failed}"
+                        "composer clipped at {width}x{height}, state={state}"
                     );
                 }
             }
         }
     }
+}
+
+#[test]
+fn website_waits_for_sign_in_and_readiness_then_sends_once_in_its_own_directory() {
+    use crate::codex::CodexCommand;
+
+    let mut codex = test_codex();
+    let (client, requests, events) = CodexClient::test_channels();
+    codex.client = Some(client);
+    codex.root = PathBuf::from("/sites/New Name");
+    codex.website_root = Some(codex.root.clone());
+    codex.draft = "Create the website with logo, images, and a privacy policy.".into();
+    codex.account = None;
+    codex.ready = false;
+    codex.auto_send = true;
+    let ctx = egui::Context::default();
+
+    codex.set_root(Path::new("/unrelated/workspace"));
+    assert_eq!(codex.root, Path::new("/sites/New Name"));
+    codex.poll(&ctx);
+    assert!(requests.try_recv().is_err());
+    assert!(!codex.draft.is_empty());
+
+    events
+        .send(CodexEvent::LoginCompleted(ChatGptAccount {
+            email: None,
+            plan_type: None,
+        }))
+        .unwrap();
+    codex.poll(&ctx);
+    assert!(matches!(
+        requests.try_recv().unwrap(),
+        CodexCommand::OpenChat
+    ));
+    assert!(requests.try_recv().is_err());
+    events.send(CodexEvent::ChatReady).unwrap();
+    codex.poll(&ctx);
+    let CodexCommand::SendChatMessage { message, .. } = requests.try_recv().unwrap() else {
+        panic!("website request was not sent");
+    };
+    assert!(message.contains("logo, images, and a privacy policy"));
+    assert!(message.contains("No workspace document is open"));
+    assert!(codex.busy && !codex.auto_send);
+    assert!(codex.draft.is_empty());
+    codex.poll(&ctx);
+    assert!(requests.try_recv().is_err());
+
+    events
+        .send(CodexEvent::ChatError("Creation failed".into()))
+        .unwrap();
+    assert!(
+        !codex.poll(&ctx),
+        "website work must not reload an unrelated workspace"
+    );
+    assert!(!codex.busy && !codex.auto_send);
+    assert!(codex.draft.contains("logo, images, and a privacy policy"));
+    codex.poll(&ctx);
+    assert!(
+        requests.try_recv().is_err(),
+        "a failed request must not replay automatically"
+    );
+    codex.return_to_workspace();
+    assert!(codex.website_root.is_none());
+}
+
+#[test]
+fn website_creation_preserves_active_work_and_unsent_drafts() {
+    let mut codex = test_codex();
+    assert!(codex.can_create_website().is_ok());
+    codex.busy = true;
+    assert!(codex.can_create_website().is_err());
+    codex.busy = false;
+    codex.auto_send = true;
+    assert!(codex.can_create_website().is_err());
+    codex.auto_send = false;
+    codex.draft = "My draft".into();
+    assert!(codex.can_create_website().is_err());
+    assert_eq!(codex.draft, "My draft");
 }
 
 #[test]

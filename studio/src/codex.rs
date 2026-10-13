@@ -45,7 +45,7 @@ pub enum CodexEvent {
     Unavailable(String),
 }
 
-enum CodexCommand {
+pub(crate) enum CodexCommand {
     BeginChatGptLogin,
     OpenChat,
     SendChatMessage {
@@ -78,6 +78,7 @@ struct ProtocolState {
     next_id: u64,
     pending: BTreeMap<u64, PendingRequest>,
     project_root: PathBuf,
+    network_access: bool,
     initialized: bool,
     queued_login: bool,
     login_active: bool,
@@ -105,6 +106,7 @@ impl ProtocolState {
             next_id: 1,
             pending: BTreeMap::new(),
             project_root,
+            network_access: false,
             initialized: false,
             queued_login: false,
             login_active: false,
@@ -258,7 +260,7 @@ impl ProtocolState {
                 "sandboxPolicy": {
                     "type": "workspaceWrite",
                     "writableRoots": [cwd],
-                    "networkAccess": false,
+                    "networkAccess": self.network_access,
                 },
                 "summary": "concise",
             }),
@@ -300,13 +302,35 @@ pub struct CodexClient {
 }
 
 impl CodexClient {
-    pub fn new(project_root: &Path) -> Result<Self, String> {
+    #[cfg(test)]
+    pub(crate) fn test_channels() -> (Self, Receiver<CodexCommand>, Sender<CodexEvent>) {
+        let (commands, requests) = mpsc::channel();
+        let (responses, events) = mpsc::channel();
+        (
+            Self {
+                commands,
+                events,
+                worker: None,
+            },
+            requests,
+            responses,
+        )
+    }
+
+    pub fn new(project_root: &Path, network_access: bool) -> Result<Self, String> {
         let (command_sender, command_receiver) = mpsc::channel();
         let (event_sender, event_receiver) = mpsc::channel();
         let project_root = project_root.to_owned();
         let worker = thread::Builder::new()
             .name("studio-codex".to_owned())
-            .spawn(move || run_worker(&project_root, command_receiver, event_sender))
+            .spawn(move || {
+                run_worker(
+                    &project_root,
+                    command_receiver,
+                    event_sender,
+                    network_access,
+                )
+            })
             .map_err(|error| format!("could not start the ChatGPT connection worker: {error}"))?;
 
         Ok(Self {
@@ -365,8 +389,19 @@ impl Drop for CodexClient {
     }
 }
 
-fn run_worker(project_root: &Path, commands: Receiver<CodexCommand>, events: Sender<CodexEvent>) {
-    run_worker_with_executable(project_root, commands, events, codex_executable());
+fn run_worker(
+    project_root: &Path,
+    commands: Receiver<CodexCommand>,
+    events: Sender<CodexEvent>,
+    network_access: bool,
+) {
+    run_worker_with_executable(
+        project_root,
+        commands,
+        events,
+        codex_executable(),
+        network_access,
+    );
 }
 
 fn run_worker_with_executable(
@@ -374,6 +409,7 @@ fn run_worker_with_executable(
     commands: Receiver<CodexCommand>,
     events: Sender<CodexEvent>,
     executable: PathBuf,
+    network_access: bool,
 ) {
     let mut child = match start_app_server_at(project_root, &executable) {
         Ok(child) => child,
@@ -403,6 +439,7 @@ fn run_worker_with_executable(
         .spawn(move || read_app_server_output(stdout, output_sender));
 
     let mut protocol = ProtocolState::new(stdin, project_root.to_owned());
+    protocol.network_access = network_access;
     if let Err(message) = protocol.initialize() {
         let _ = events.send(CodexEvent::Unavailable(message));
         let _ = child.kill();

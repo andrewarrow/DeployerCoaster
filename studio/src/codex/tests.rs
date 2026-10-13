@@ -226,6 +226,10 @@ fn initialization_starts_queued_chat_and_defers_cancel_until_turn_id_arrives() {
         turn_start["params"]["sandboxPolicy"]["writableRoots"][0],
         std::env::temp_dir().to_string_lossy().as_ref()
     );
+    assert_eq!(
+        turn_start["params"]["sandboxPolicy"]["networkAccess"],
+        false
+    );
 
     harness.protocol.interrupt_turn().unwrap();
     assert!(harness.protocol.cancel_requested);
@@ -239,6 +243,28 @@ fn initialization_starts_queued_chat_and_defers_cancel_until_turn_id_arrives() {
     let interrupt = harness.read_message();
     assert_eq!(interrupt["method"], "turn/interrupt");
     assert_eq!(interrupt["params"]["turnId"], "turn-1");
+}
+
+#[cfg(unix)]
+#[test]
+fn website_turn_scopes_writes_to_target_and_enables_network_for_images() {
+    let mut harness = ProtocolHarness::new();
+    harness.protocol.project_root = PathBuf::from("/sites/New Name");
+    harness.protocol.network_access = true;
+    harness.protocol.thread_id = Some("website-thread".into());
+    harness
+        .protocol
+        .queue_chat_message("Create website".into(), "gpt-5".into(), "high".into())
+        .unwrap();
+    let request = harness.read_message();
+    assert_eq!(request["method"], "turn/start");
+    assert_eq!(request["params"]["cwd"], "/sites/New Name");
+    assert_eq!(
+        request["params"]["sandboxPolicy"]["writableRoots"],
+        json!(["/sites/New Name"])
+    );
+    assert_eq!(request["params"]["sandboxPolicy"]["networkAccess"], true);
+    assert_eq!(request["params"]["sandboxPolicy"]["type"], "workspaceWrite");
 }
 
 #[cfg(unix)]
@@ -401,7 +427,7 @@ fn worker_starts_fake_app_server_and_reaps_it_on_shutdown() {
     let (events_tx, events_rx) = mpsc::channel();
     let project_root = temp.path().to_owned();
     let worker = thread::spawn(move || {
-        run_worker_with_executable(&project_root, command_rx, events_tx, executable)
+        run_worker_with_executable(&project_root, command_rx, events_tx, executable, false)
     });
 
     assert!(matches!(

@@ -25,6 +25,7 @@ mod play_store;
 mod preferences;
 mod storage;
 mod style;
+mod website;
 mod workspace;
 
 use std::{error::Error, num::NonZeroU32, sync::Arc, time::Instant};

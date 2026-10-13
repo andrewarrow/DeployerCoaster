@@ -270,7 +270,11 @@ impl Dashboard {
                     .inner_margin(egui::Margin::same(16)),
             )
             .show(ui, |ui| match self.navigation {
-                Section::Names => self.names.ui(ui),
+                Section::Names => {
+                    if let Some(name) = self.names.ui(ui) {
+                        command = Some(Command::CreateWebsite(name));
+                    }
+                }
                 Section::Domains => {
                     if dynadot.domains_ui(ui) {
                         command = Some(Command::DynadotSettings);

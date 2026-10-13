@@ -21,6 +21,8 @@ struct ChatMessage {
 pub(crate) struct Codex {
     client: Option<CodexClient>,
     root: PathBuf,
+    website_root: Option<PathBuf>,
+    auto_send: bool,
     account: Option<ChatGptAccount>,
     checking: bool,
     login_pending: bool,
@@ -51,6 +53,8 @@ impl Codex {
         Self {
             client: None,
             root,
+            website_root: None,
+            auto_send: false,
             account: None,
             checking: false,
             login_pending: false,
@@ -92,7 +96,7 @@ impl Codex {
         self.sent_draft = None;
         self.activity.clear();
         self.error = None;
-        match CodexClient::new(&self.root) {
+        match CodexClient::new(&self.root, self.website_root.is_some()) {
             Ok(client) => {
                 self.client = Some(client);
                 self.available = true;
@@ -102,6 +106,9 @@ impl Codex {
     }
 
     pub(crate) fn set_root(&mut self, root: &Path) {
+        if self.website_root.is_some() {
+            return;
+        }
         let root = root.canonicalize().unwrap_or_else(|_| root.to_owned());
         if self.root != root {
             if let Some(draft) = self.sent_draft.take()
@@ -113,6 +120,33 @@ impl Codex {
             self.messages.clear();
             self.restart();
         }
+    }
+
+    pub(crate) fn can_create_website(&self) -> Result<(), String> {
+        if self.busy || self.auto_send {
+            return Err(
+                "Finish or cancel the current Codex request before creating a website.".into(),
+            );
+        }
+        if !self.draft.trim().is_empty() {
+            return Err("Send or clear your Codex draft before creating a website.".into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn create_website(&mut self, request: crate::website::WebsiteRequest) {
+        self.root = request.root.clone();
+        self.website_root = Some(request.root);
+        self.messages.clear();
+        self.restart();
+        self.draft = request.prompt;
+        self.auto_send = true;
+        self.open = true;
+    }
+
+    pub(crate) fn return_to_workspace(&mut self) {
+        self.website_root = None;
+        self.auto_send = false;
     }
 
     /// A completed or interrupted turn may have written workspace files.
@@ -238,10 +272,19 @@ impl Codex {
                 Err(error) => self.unavailable(error),
             }
         }
+        if self.auto_send
+            && self.ready
+            && self.account.is_some()
+            && !self.busy
+            && self.error.is_none()
+        {
+            self.auto_send = false;
+            self.send(None);
+        }
         if self.checking || self.login_pending || self.opening || self.busy {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
-        changed
+        changed && self.website_root.is_none()
     }
 
     fn finish_turn(&mut self) {
@@ -360,7 +403,7 @@ impl Codex {
                 }
                 if ui
                     .add_enabled(
-                        !self.busy && !self.checking && !self.login_pending,
+                        !self.busy && !self.auto_send && !self.checking && !self.login_pending,
                         egui::Button::new("New chat"),
                     )
                     .clicked()
@@ -403,7 +446,7 @@ impl Codex {
         });
         ui.add_space(8.0);
         // The composer stays visible as the conversation grows.
-        let height = (ui.available_height() - 172.0).max(40.0);
+        let height = (ui.available_height() - 220.0).max(40.0);
         egui::ScrollArea::vertical()
             .id_salt("codex_messages")
             .auto_shrink([false, false])
@@ -446,6 +489,16 @@ impl Codex {
                         Err(error) => self.error = Some(error),
                     }
                 }
+            } else if self.auto_send {
+                if self.opening || self.checking {
+                    ui.spinner();
+                    ui.label("Starting Codex…");
+                } else if self.account.is_none() {
+                    ui.label("Connect ChatGPT to create the website.");
+                }
+                if ui.button("Cancel").clicked() {
+                    self.auto_send = false;
+                }
             } else if self.opening || self.checking {
                 ui.spinner();
                 ui.label("Starting Codex…");
@@ -468,13 +521,22 @@ impl Codex {
             }
         }
         ui.label("Message");
-        let response = ui.add(
-            egui::TextEdit::multiline(&mut self.draft)
-                .id_salt("codex_draft")
-                .desired_width(f32::INFINITY)
-                .desired_rows(2)
-                .hint_text("Ask Codex…"),
-        );
+        let response = egui::ScrollArea::vertical()
+            .id_salt("codex_composer")
+            .max_height(72.0)
+            .show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.draft)
+                        .id_salt("codex_draft")
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(2)
+                        .hint_text("Ask Codex…"),
+                )
+            })
+            .inner;
+        if response.changed() && self.draft.trim().is_empty() {
+            self.auto_send = false;
+        }
         let shortcut = response.has_focus()
             && ui.input(|input| input.modifiers.command && input.key_pressed(egui::Key::Enter));
         let can_send =
@@ -487,13 +549,21 @@ impl Codex {
             .on_hover_text("Send (⌘/Ctrl+Enter)")
             .clicked();
         if can_send && (send || shortcut) {
+            self.auto_send = false;
             self.send(workspace_path);
         }
     }
 
     fn send(&mut self, workspace_path: Option<&Path>) {
         let text = self.draft.trim().to_owned();
-        let message = contextual_message(&text, workspace_path);
+        let message = contextual_message(
+            &text,
+            if self.website_root.is_some() {
+                None
+            } else {
+                workspace_path
+            },
+        );
         match self
             .client
             .as_ref()

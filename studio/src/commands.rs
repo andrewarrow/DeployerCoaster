@@ -4,6 +4,7 @@ use std::path::PathBuf;
 pub enum Command {
     OpenWorkspace,
     OpenPath(PathBuf),
+    CreateWebsite(String),
     Save,
     SaveAs,
     CloseWorkspace,

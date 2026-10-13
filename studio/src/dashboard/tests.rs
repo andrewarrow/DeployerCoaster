@@ -34,6 +34,7 @@ fn names_page_adds_locally_and_fits_supported_sizes() {
         let mut dynadot = crate::dynadot::Dynadot::default();
         let ctx = egui::Context::default();
         crate::style::configure(&ctx);
+        let mut action = None;
         let mut render = |dashboard: &mut Dashboard, events| {
             ctx.run_ui(
                 egui::RawInput {
@@ -42,7 +43,11 @@ fn names_page_adds_locally_and_fits_supported_sizes() {
                     ..Default::default()
                 },
                 |ui| {
-                    dashboard.ui(ui, &mut play, &mut apple, &mut dynadot, true);
+                    if let Some(command) =
+                        dashboard.ui(ui, &mut play, &mut apple, &mut dynadot, true)
+                    {
+                        action = Some(command);
+                    }
                     assert!(
                         ui.min_rect().right() <= width,
                         "Names overflow at {width}px"
@@ -102,6 +107,21 @@ fn names_page_adds_locally_and_fits_supported_sizes() {
         }
         output = render(&mut dashboard, vec![]);
         label_position(&output, "1 name");
+        let pos = label_position(&output, "Create website");
+        for pressed in [true, false] {
+            let _ = render(
+                &mut dashboard,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
         assert_eq!(
             serde_json::from_slice::<Vec<String>>(&std::fs::read(&path).unwrap()).unwrap(),
             [name.trim()]
@@ -109,6 +129,9 @@ fn names_page_adds_locally_and_fits_supported_sizes() {
         dashboard.names = names::Names::from_path(path);
         output = render(&mut dashboard, vec![]);
         label_position(&output, "1 name");
+        assert!(
+            matches!(action, Some(Command::CreateWebsite(selected)) if selected == name.trim())
+        );
     }
 }
 

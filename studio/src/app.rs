@@ -344,6 +344,19 @@ impl App {
         match command {
             Command::OpenWorkspace => self.request_action(PendingAction::Open),
             Command::OpenPath(path) => self.request_action(PendingAction::OpenPath(path)),
+            Command::CreateWebsite(name) => {
+                let request = self.codex.can_create_website().and_then(|()| {
+                    crate::website::WebsiteRequest::prepare(&name, &self.codex_default_root)
+                });
+                match request {
+                    Ok(request) => {
+                        self.codex.create_website(request);
+                        self.status = None;
+                        self.status_is_error = false;
+                    }
+                    Err(error) => self.set_error(error),
+                }
+            }
             Command::Save => self.save(),
             Command::SaveAs => self.save_as(),
             Command::CloseWorkspace => self.request_action(PendingAction::CloseWorkspace),
@@ -499,6 +512,7 @@ impl App {
             PendingAction::Open => self.open_dialog(),
             PendingAction::OpenPath(path) => self.open_path(path),
             PendingAction::CloseWorkspace => {
+                self.codex.return_to_workspace();
                 self.workspace = None;
                 self.set_status("Workspace closed");
             }
@@ -518,6 +532,7 @@ impl App {
     fn open_path(&mut self, path: PathBuf) {
         match Workspace::open(path.clone()) {
             Ok(workspace) => {
+                self.codex.return_to_workspace();
                 self.workspace = Some(workspace);
                 self.preferences.remember(path);
                 if self.save_preferences() {
