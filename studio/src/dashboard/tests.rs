@@ -1,6 +1,118 @@
 use super::*;
 
 #[test]
+fn names_page_adds_locally_and_fits_supported_sizes() {
+    fn label_position(output: &egui::FullOutput, label: &str) -> Pos2 {
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.pos + text.galley.size() * 0.5)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("Missing label: {label}"))
+    }
+
+    for (width, height) in [
+        (390.0, 844.0),
+        (768.0, 1024.0),
+        (1280.0, 800.0),
+        (1440.0, 900.0),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("names.json");
+        let mut dashboard = Dashboard {
+            names: names::Names::from_path(path.clone()),
+            mobile_detail: true,
+            ..Default::default()
+        };
+        dashboard.select_section(Section::Names);
+        let mut play = PlayStore::default();
+        let mut apple = AppleStore::default();
+        let mut dynadot = crate::dynadot::Dynadot::default();
+        let ctx = egui::Context::default();
+        crate::style::configure(&ctx);
+        let mut render = |dashboard: &mut Dashboard, events| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, height))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    dashboard.ui(ui, &mut play, &mut apple, &mut dynadot, true);
+                    assert!(
+                        ui.min_rect().right() <= width,
+                        "Names overflow at {width}px"
+                    );
+                },
+            )
+        };
+        let mut click = |dashboard: &mut Dashboard, pos| {
+            for pressed in [true, false] {
+                let _ = render(
+                    dashboard,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            render(dashboard, vec![])
+        };
+        let mut output = click(&mut dashboard, pos2(width - 1.0, height - 1.0));
+        label_position(&output, "0 names");
+        label_position(&output, "You haven't added any names.");
+        assert!(!output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, Shape::Text(text) if text.galley.text() == "Search apps or identifiers…" || text.galley.text() == "‹  My Apps" || text.galley.text() == "Websites")
+        }));
+        let pos = label_position(&output, "Add new name");
+        output = click(&mut dashboard, pos);
+        label_position(&output, "Name");
+        let pos = label_position(&output, "Cancel");
+        output = click(&mut dashboard, pos);
+        label_position(&output, "0 names");
+        assert!(!path.exists());
+
+        let pos = label_position(&output, "Add new name");
+        let _ = click(&mut dashboard, pos);
+        let name = "A long name with spaces and Unicode — café ".repeat(8);
+        output = render(&mut dashboard, vec![egui::Event::Text(name.clone())]);
+        let pos = label_position(&output, "Add");
+        for pressed in [true, false] {
+            let _ = render(
+                &mut dashboard,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        output = render(&mut dashboard, vec![]);
+        label_position(&output, "1 name");
+        assert_eq!(
+            serde_json::from_slice::<Vec<String>>(&std::fs::read(&path).unwrap()).unwrap(),
+            [name.trim()]
+        );
+        dashboard.names = names::Names::from_path(path);
+        output = render(&mut dashboard, vec![]);
+        label_position(&output, "1 name");
+    }
+}
+
+#[test]
 fn analytics_shows_sales_without_requiring_apps_and_opens_apple_settings() {
     for (width, height) in [
         (390.0, 844.0),

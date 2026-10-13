@@ -1,4 +1,5 @@
 mod library;
+mod names;
 mod navigation;
 mod product;
 #[cfg(test)]
@@ -96,6 +97,7 @@ pub(crate) struct Dashboard {
     logo: Option<egui::TextureHandle>,
     github: crate::github::GitHub,
     google_oauth: crate::google_oauth::GoogleOAuth,
+    names: names::Names,
 }
 
 #[derive(Clone, Copy)]
@@ -142,6 +144,13 @@ impl Palette {
 }
 
 impl Dashboard {
+    pub(crate) fn load() -> Self {
+        Self {
+            names: names::Names::load(),
+            ..Default::default()
+        }
+    }
+
     pub(crate) fn ui(
         &mut self,
         ui: &mut Ui,
@@ -261,6 +270,7 @@ impl Dashboard {
                     .inner_margin(egui::Margin::same(16)),
             )
             .show(ui, |ui| match self.navigation {
+                Section::Names => self.names.ui(ui),
                 Section::Domains => {
                     if dynadot.domains_ui(ui) {
                         command = Some(Command::DynadotSettings);

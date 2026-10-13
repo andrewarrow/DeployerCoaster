@@ -100,7 +100,7 @@ impl App {
             workspace: None,
             pending_action: None,
             quit: false,
-            dashboard: crate::dashboard::Dashboard::default(),
+            dashboard: crate::dashboard::Dashboard::load(),
             codex: crate::codex_ui::Codex::new(codex_root),
             codex_default_root,
             settings_section: SettingsSection::default(),

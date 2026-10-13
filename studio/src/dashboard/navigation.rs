@@ -5,7 +5,7 @@ pub(super) enum Section {
     #[default]
     Overview,
     Apps,
-    Websites,
+    Names,
     Domains,
     Hosting,
     GitHub,
@@ -22,7 +22,7 @@ impl Section {
     pub(super) const ALL: &'static [(Self, &'static str, Icon)] = &[
         (Self::Overview, "Overview", Icon::Home),
         (Self::Apps, "My Apps", Icon::Apps),
-        (Self::Websites, "Websites", Icon::Globe),
+        (Self::Names, "Names", Icon::Globe),
         (Self::Domains, "Domains", Icon::Domain),
         (Self::Hosting, "Hosting", Icon::Server),
         (Self::GitHub, "GitHub orgs", Icon::Users),
@@ -44,7 +44,12 @@ impl Section {
     pub(super) fn has_dedicated_page(self) -> bool {
         matches!(
             self,
-            Self::Domains | Self::Hosting | Self::GitHub | Self::GoogleOAuth | Self::Analytics
+            Self::Names
+                | Self::Domains
+                | Self::Hosting
+                | Self::GitHub
+                | Self::GoogleOAuth
+                | Self::Analytics
         )
     }
 
@@ -264,7 +269,6 @@ impl Dashboard {
 
     pub(super) fn service_page(&self, ui: &mut Ui, p: Palette, command: &mut Option<Command>) {
         let message = match self.navigation {
-            Section::Websites => "No websites are connected yet.",
             Section::Deployments => "No deployment sources are connected yet.",
             Section::Team => "Team management isn't available yet.",
             _ => return,
