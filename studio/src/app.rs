@@ -343,6 +343,9 @@ impl App {
         if let Some(result) = self.codex.take_rewritten_description() {
             self.wizard.receive_rewritten_description(result);
         }
+        if let Some(root) = self.codex.take_created_website() {
+            self.wizard.receive_created_website(root);
+        }
     }
 
     fn refresh_workspace_after_codex(&mut self) {
@@ -434,11 +437,6 @@ impl App {
         if window == AppWindow::Wizard {
             return match self.wizard.ui(ui, &mut self.codex, &self.codex_default_root) {
                 WizardAction::Finished => AppWindowAction::Close,
-                WizardAction::WebsiteStarted => {
-                    self.status = None;
-                    self.status_is_error = false;
-                    AppWindowAction::FocusMain
-                }
                 WizardAction::None => AppWindowAction::None,
             };
         }
@@ -469,7 +467,7 @@ impl App {
 
     pub fn app_window_closed(&mut self, window: AppWindow) {
         if window == AppWindow::Wizard {
-            self.codex.abandon_description_rewrite();
+            self.codex.abandon_wizard_generation();
         }
     }
 

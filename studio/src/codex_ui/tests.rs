@@ -4,7 +4,8 @@ fn test_codex() -> Codex {
     Codex {
         client: None,
         root: PathBuf::from("/workspace/a-very-long-workspace-directory-name"),
-        website_root: None,
+        website_request: None,
+        created_website: None,
         description_rewrite: None,
         rewrite_response: None,
         rewritten_description: None,
@@ -167,7 +168,10 @@ fn website_waits_for_sign_in_and_readiness_then_sends_once_in_its_own_directory(
     let (client, requests, events) = CodexClient::test_channels();
     codex.client = Some(client);
     codex.root = PathBuf::from("/sites/New Name");
-    codex.website_root = Some(codex.root.clone());
+    codex.website_request = Some(WebsiteRequest {
+        root: codex.root.clone(),
+        prompt: "Create the website with logo, images, and a privacy policy.".into(),
+    });
     codex.draft = "Create the website with logo, images, and a privacy policy.".into();
     codex.account = None;
     codex.ready = false;
@@ -219,7 +223,7 @@ fn website_waits_for_sign_in_and_readiness_then_sends_once_in_its_own_directory(
         "a failed request must not replay automatically"
     );
     codex.return_to_workspace();
-    assert!(codex.website_root.is_none());
+    assert!(codex.website_request.is_none());
 }
 
 #[test]

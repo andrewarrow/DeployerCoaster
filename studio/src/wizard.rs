@@ -19,7 +19,6 @@ const STEP_COUNT: u8 = 9;
 pub(crate) enum WizardAction {
     None,
     Finished,
-    WebsiteStarted,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -30,6 +29,8 @@ pub struct Wizard {
     original_description: String,
     rewritten_description: Option<RewrittenDescription>,
     website_started: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    website_created: Option<PathBuf>,
     #[serde(skip)]
     path: Option<PathBuf>,
     #[serde(skip)]
@@ -44,6 +45,7 @@ impl Default for Wizard {
             original_description: String::new(),
             rewritten_description: None,
             website_started: false,
+            website_created: None,
             path: None,
             error: None,
         }
@@ -83,14 +85,26 @@ impl Wizard {
                 }) {
                     wizard.rewritten_description = None;
                     wizard.website_started = false;
+                    wizard.website_created = None;
                 }
                 if wizard.app_name.trim().is_empty() || wizard.original_description.trim().is_empty() {
                     wizard.step = 1;
                     wizard.rewritten_description = None;
                     wizard.website_started = false;
+                    wizard.website_created = None;
                 } else if wizard.step >= 3 && wizard.rewritten_description.is_none() {
                     wizard.step = 2;
                     wizard.website_started = false;
+                    wizard.website_created = None;
+                }
+                let slug = wizard.app_name.trim().to_lowercase().replace(' ', "-");
+                if !wizard.website_started || wizard.website_created.as_ref().is_some_and(|root| {
+                    root.file_name().is_none_or(|name| name != slug.as_str())
+                }) {
+                    wizard.website_created = None;
+                }
+                if wizard.step > 4 && wizard.website_created.is_none() {
+                    wizard.step = 4;
                 }
                 wizard
             }
@@ -130,6 +144,15 @@ impl Wizard {
         }
     }
 
+    pub(crate) fn receive_created_website(&mut self, root: PathBuf) {
+        let slug = self.app_name.trim().to_lowercase().replace(' ', "-");
+        if self.website_started && root.file_name().is_some_and(|name| name == slug.as_str()) {
+            self.website_created = Some(root);
+            self.error = None;
+            self.save_progress();
+        }
+    }
+
     fn start_rewrite(&mut self, codex: &mut Codex, root: &Path) -> Result<(), String> {
         codex.can_rewrite_description()?;
         let request = DescriptionRewriteRequest::new(
@@ -139,6 +162,7 @@ impl Wizard {
         codex.rewrite_description(request, root);
         self.rewritten_description = None;
         self.website_started = false;
+        self.website_created = None;
         self.error = None;
         self.step = 2;
         Ok(())
@@ -150,11 +174,15 @@ impl Wizard {
             .as_ref()
             .ok_or("Rewrite the description before creating the website.")?;
         codex.can_create_website()?;
-        let request = WebsiteRequest::prepare(&rewritten.name, &rewritten.description, root)?;
+        let request = if self.website_started {
+            WebsiteRequest::resume(&rewritten.name, &rewritten.description, root)?
+        } else {
+            WebsiteRequest::prepare(&rewritten.name, &rewritten.description, root)?
+        };
         codex.create_website(request);
         self.website_started = true;
+        self.website_created = None;
         self.error = None;
-        self.step = 4;
         Ok(())
     }
 
@@ -199,6 +227,7 @@ impl Wizard {
                                 if name.changed() || description.changed() {
                                     self.rewritten_description = None;
                                     self.website_started = false;
+                                    self.website_created = None;
                                     self.error = None;
                                     changed = true;
                                 }
@@ -225,8 +254,16 @@ impl Wizard {
                                     ui.weak(format!("{} / 3999 characters", rewritten.description.chars().count()));
                                     description_preview(ui, "wizard_rewritten", &rewritten.description, preview_height);
                                 }
-                                if self.website_started {
-                                    ui.label("Website creation started.");
+                            }
+                            4 => {
+                                ui.heading("Website");
+                                if self.website_created.is_some() {
+                                    ui.label("Website created. Ready to continue.");
+                                } else if self.website_started && codex.website_creation_ui(ui) {
+                                    match self.create_website(codex, root) {
+                                        Ok(()) => changed = true,
+                                        Err(error) => self.error = Some(error),
+                                    }
                                 }
                             }
                             _ => {}
@@ -242,7 +279,7 @@ impl Wizard {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let label = if self.step == STEP_COUNT {
                             "Finish"
-                        } else if self.step == 3 && !self.website_started {
+                        } else if self.step == 4 && !self.website_started {
                             "Create website"
                         } else {
                             "Next"
@@ -250,6 +287,11 @@ impl Wizard {
                         let enabled = match self.step {
                             1 => !self.app_name.trim().is_empty() && !self.original_description.trim().is_empty(),
                             2 | 3 => self.rewritten_description.is_some(),
+                            4 => if self.website_started {
+                                self.website_created.is_some()
+                            } else {
+                                self.rewritten_description.is_some()
+                            },
                             _ => true,
                         };
                         if ui.add_enabled(enabled, egui::Button::new(label).min_size(egui::vec2(80.0, 44.0))).clicked() {
@@ -260,10 +302,9 @@ impl Wizard {
                                         Err(error) => self.error = Some(error),
                                     }
                                 }
-                                3 if !self.website_started => {
+                                4 if !self.website_started => {
                                     match self.create_website(codex, root) {
                                         Ok(()) => {
-                                            action = WizardAction::WebsiteStarted;
                                             changed = true;
                                         }
                                         Err(error) => self.error = Some(error),
@@ -285,10 +326,13 @@ impl Wizard {
                             }
                         }
                         if self.step > 1 && ui.add(egui::Button::new("Back").min_size(egui::vec2(80.0, 44.0))).clicked() {
+                            if self.step == 2 || self.step == 4 {
+                                codex.abandon_wizard_generation();
+                            }
                             if self.step == 2 {
-                                codex.abandon_description_rewrite();
                                 self.rewritten_description = None;
                                 self.website_started = false;
+                                self.website_created = None;
                             }
                             self.error = None;
                             self.step -= 1;

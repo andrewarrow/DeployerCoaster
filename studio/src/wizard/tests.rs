@@ -105,7 +105,7 @@ fn saved_review(path: PathBuf) -> Wizard {
 }
 
 #[test]
-fn review_step_resumes_with_complete_descriptions_and_create_button() {
+fn review_step_resumes_with_complete_descriptions_and_next_button() {
     for size in [
         [390.0, 360.0],
         [560.0, 400.0],
@@ -164,9 +164,23 @@ fn review_step_resumes_with_complete_descriptions_and_create_button() {
         ] {
             label_position(&output, label);
         }
+        let next = label_position(&output, "Next");
+        assert!(next.y < size[1], "Next clipped at {size:?}");
+        assert!(!output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, Shape::Text(text) if text.galley.text() == "Create website")
+        }));
+        assert!(matches!(action, WizardAction::None));
+        let (_, action) = click(&mut resumed, &mut codex, &ctx, size, next);
+        assert!(matches!(action, WizardAction::None));
+        let mut resumed = Wizard::from_path(resumed.path.clone().unwrap());
+        assert_eq!(resumed.step, 4);
+        assert!(!resumed.website_started);
+        assert!(resumed.website_created.is_none());
+        let _ = render(&mut resumed, &mut codex, &ctx, size, vec![]);
+        let (output, _) = render(&mut resumed, &mut codex, &ctx, size, vec![]);
+        label_position(&output, "Step 4 of 9");
         let create = label_position(&output, "Create website");
         assert!(create.y < size[1], "Create website clipped at {size:?}");
-        assert!(matches!(action, WizardAction::None));
     }
 }
 
@@ -259,6 +273,7 @@ fn back_navigation_and_finish_are_saved() {
     wizard = saved_review(path.clone());
     wizard.step = STEP_COUNT;
     wizard.website_started = true;
+    wizard.website_created = Some(directory.path().join("example"));
     wizard.persist().unwrap();
     let _ = render(&mut wizard, &mut codex, &ctx, size, vec![]);
     let (output, _) = render(&mut wizard, &mut codex, &ctx, size, vec![]);

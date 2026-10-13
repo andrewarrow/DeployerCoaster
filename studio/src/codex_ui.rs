@@ -5,6 +5,7 @@ use std::{
 
 use crate::codex::{ChatGptAccount, CodexClient, CodexEvent, CodexWorkStatus};
 use crate::description::{DescriptionRewriteRequest, RewrittenDescription};
+use crate::website::WebsiteRequest;
 
 const GENERATION_MODEL: &str = "gpt-6.1-sol";
 const GENERATION_EFFORT: &str = "xhigh";
@@ -23,10 +24,16 @@ struct ChatMessage {
     text: String,
 }
 
+enum GenerationKind {
+    Description,
+    Website,
+}
+
 pub(crate) struct Codex {
     client: Option<CodexClient>,
     root: PathBuf,
-    website_root: Option<PathBuf>,
+    website_request: Option<WebsiteRequest>,
+    created_website: Option<PathBuf>,
     description_rewrite: Option<DescriptionRewriteRequest>,
     rewrite_response: Option<String>,
     rewritten_description: Option<RewrittenDescription>,
@@ -61,7 +68,8 @@ impl Codex {
         Self {
             client: None,
             root,
-            website_root: None,
+            website_request: None,
+            created_website: None,
             description_rewrite: None,
             rewrite_response: None,
             rewritten_description: None,
@@ -108,7 +116,7 @@ impl Codex {
         self.sent_draft = None;
         self.activity.clear();
         self.error = None;
-        match CodexClient::new(&self.root, self.website_root.is_some()) {
+        match CodexClient::new(&self.root, self.website_request.is_some()) {
             Ok(client) => {
                 self.client = Some(client);
                 self.available = true;
@@ -118,7 +126,7 @@ impl Codex {
     }
 
     pub(crate) fn set_root(&mut self, root: &Path) {
-        if self.website_root.is_some() || self.description_rewrite.is_some() {
+        if self.website_request.is_some() || self.description_rewrite.is_some() {
             return;
         }
         let root = root.canonicalize().unwrap_or_else(|_| root.to_owned());
@@ -152,35 +160,37 @@ impl Codex {
         Ok(())
     }
 
-    pub(crate) fn create_website(&mut self, request: crate::website::WebsiteRequest) {
+    pub(crate) fn create_website(&mut self, request: WebsiteRequest) {
         self.root = request.root.clone();
-        self.website_root = Some(request.root);
+        let prompt = request.prompt.clone();
+        self.website_request = Some(request);
         self.description_rewrite = None;
-        self.start_generation(request.prompt);
+        self.start_generation(prompt);
     }
 
     pub(crate) fn rewrite_description(&mut self, request: DescriptionRewriteRequest, root: &Path) {
         self.root = root.to_owned();
-        self.website_root = None;
+        self.website_request = None;
         let prompt = request.prompt.clone();
         self.description_rewrite = Some(request);
         self.start_generation(prompt);
-        self.open = false;
     }
 
     fn start_generation(&mut self, prompt: String) {
         self.model = GENERATION_MODEL;
         self.effort = GENERATION_EFFORT;
         self.rewritten_description = None;
+        self.created_website = None;
         self.messages.clear();
         self.restart();
         self.draft = prompt;
         self.auto_send = true;
-        self.open = true;
+        self.open = false;
     }
 
     pub(crate) fn return_to_workspace(&mut self) {
-        self.website_root = None;
+        self.website_request = None;
+        self.created_website = None;
         self.description_rewrite = None;
         self.rewrite_response = None;
         self.auto_send = false;
@@ -190,8 +200,12 @@ impl Codex {
         self.rewritten_description.take()
     }
 
-    pub(crate) fn abandon_description_rewrite(&mut self) {
-        if self.description_rewrite.is_some() {
+    pub(crate) fn take_created_website(&mut self) -> Option<PathBuf> {
+        self.created_website.take()
+    }
+
+    pub(crate) fn abandon_wizard_generation(&mut self) {
+        if self.description_rewrite.is_some() || self.website_request.is_some() {
             self.return_to_workspace();
             self.rewritten_description = None;
             self.draft.clear();
@@ -205,6 +219,47 @@ impl Codex {
     /// feedback compact, without exposing the prompt or chat composer. Returns
     /// true when a retry needs the wizard's saved inputs after a restart.
     pub(crate) fn description_rewrite_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let retry = self.generation_ui(ui, GenerationKind::Description);
+        if retry && let Some(request) = self.description_rewrite.clone() {
+            let root = self.root.clone();
+            self.rewrite_description(request, &root);
+            return false;
+        }
+        retry
+    }
+
+    pub(crate) fn website_creation_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let retry = self.generation_ui(ui, GenerationKind::Website);
+        if retry && let Some(request) = self.website_request.clone() {
+            self.create_website(request);
+            return false;
+        }
+        retry
+    }
+
+    fn generation_ui(&mut self, ui: &mut egui::Ui, kind: GenerationKind) -> bool {
+        let (working, connect, stopped, retry_label) = match kind {
+            GenerationKind::Description => (
+                "Codex is rewriting the description…",
+                "Connect ChatGPT to rewrite the description.",
+                "The rewrite stopped. Try again.",
+                "Retry rewrite",
+            ),
+            GenerationKind::Website => (
+                "Codex is creating the website…",
+                "Connect ChatGPT to create the website.",
+                "Website creation stopped. Try again.",
+                "Retry website",
+            ),
+        };
+        let has_request = match kind {
+            GenerationKind::Description => self.description_rewrite.is_some(),
+            GenerationKind::Website => self.website_request.is_some(),
+        };
+        if !has_request {
+            ui.label(stopped);
+            return ui.add(egui::Button::new(retry_label).min_size(egui::vec2(112.0, 44.0))).clicked();
+        }
         if let Some(error) = &self.error {
             ui.add(
                 egui::Label::new(egui::RichText::new(error).color(ui.visuals().error_fg_color))
@@ -220,13 +275,13 @@ impl Codex {
                 } else if self.checking || self.opening {
                     "Starting Codex…"
                 } else if self.busy {
-                    "Codex is rewriting the description…"
+                    working
                 } else if self.account.is_none() && self.auto_send {
-                    "Connect ChatGPT to rewrite the description."
+                    connect
                 } else if self.auto_send {
                     "Starting Codex…"
                 } else {
-                    "The rewrite stopped. Try again."
+                    stopped
                 });
             });
         }
@@ -251,14 +306,8 @@ impl Codex {
         {
             self.begin_login();
         }
-        let retry = !self.busy && (self.error.is_some() || !self.auto_send)
-            && ui.add(egui::Button::new("Retry rewrite").min_size(egui::vec2(112.0, 44.0))).clicked();
-        if retry && let Some(request) = self.description_rewrite.clone() {
-            let root = self.root.clone();
-            self.rewrite_description(request, &root);
-            return false;
-        }
-        retry
+        !self.busy && (self.error.is_some() || !self.auto_send)
+            && ui.add(egui::Button::new(retry_label).min_size(egui::vec2(112.0, 44.0))).clicked()
     }
 
     /// A completed or interrupted turn may have written workspace files.
@@ -343,6 +392,9 @@ impl Codex {
                             Err(error) => self.error = Some(error),
                         }
                     }
+                    if self.busy && let Some(request) = &self.website_request {
+                        self.created_website = Some(request.root.clone());
+                    }
                     self.finish_turn();
                     changed = true;
                 }
@@ -408,7 +460,7 @@ impl Codex {
         if self.checking || self.login_pending || self.opening || self.busy {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
-        changed && self.website_root.is_none() && self.description_rewrite.is_none()
+        changed && self.website_request.is_none() && self.description_rewrite.is_none()
     }
 
     fn finish_turn(&mut self) {
@@ -440,11 +492,14 @@ impl Codex {
         ui.horizontal_wrapped(|ui| {
             if let Some(account) = &self.account {
                 if ui
-                    .button(if self.open {
-                        "Close Codex chat"
-                    } else {
-                        "Codex chat"
-                    })
+                    .add_enabled(
+                        self.description_rewrite.is_none() && self.website_request.is_none(),
+                        egui::Button::new(if self.open {
+                            "Close Codex chat"
+                        } else {
+                            "Codex chat"
+                        }),
+                    )
                     .clicked()
                 {
                     self.open = !self.open;
@@ -689,7 +744,7 @@ impl Codex {
         let text = self.draft.trim().to_owned();
         let message = contextual_message(
             &text,
-            if self.website_root.is_some() || self.description_rewrite.is_some() {
+            if self.website_request.is_some() || self.description_rewrite.is_some() {
                 None
             } else {
                 workspace_path
