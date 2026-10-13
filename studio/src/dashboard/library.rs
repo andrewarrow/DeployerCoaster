@@ -102,6 +102,13 @@ impl Dashboard {
                         ui.allocate_exact_size(vec2(ui.available_width(), 82.0), Sense::hover());
                     let response = control(ui, rect, ("app", &product.identifier), &product.name)
                         .on_hover_text(&product.identifier);
+                    apple.app_context_menu(
+                        &response,
+                        product
+                            .listings
+                            .iter()
+                            .find(|listing| listing.store == Store::Apple),
+                    );
                     let selected = self.selected.as_deref() == Some(&product.identifier);
                     if selected || response.hovered() || response.has_focus() {
                         ui.painter().rect(

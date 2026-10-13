@@ -381,9 +381,23 @@ pub struct AppleStore {
     cancelled: bool,
     icons: crate::app_icons::AppIcons,
     sales: crate::apple_sales::SalesReports,
+    app_copy: crate::apple_copy::AppCopy,
 }
 
 impl AppleStore {
+    pub(crate) fn app_context_menu(
+        &mut self,
+        response: &egui::Response,
+        app: Option<&crate::dashboard::StoreApp>,
+    ) {
+        self.app_copy
+            .context_menu(response, app, self.credentials.as_ref());
+    }
+
+    pub(crate) fn app_copy_ui(&mut self, ctx: &egui::Context) {
+        self.app_copy.ui(ctx);
+    }
+
     pub(crate) fn dashboard_apps(&self) -> Vec<crate::dashboard::StoreApp> {
         self.apps
             .iter()
@@ -592,13 +606,14 @@ impl AppleStore {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     let icons = &mut self.icons;
+                    let app_copy = &mut self.app_copy;
                     for app in &self.apps {
                         let title = if app.attributes.name.is_empty() {
                             &app.id
                         } else {
                             &app.attributes.name
                         };
-                        ui.horizontal_top(|ui| {
+                        let row = ui.horizontal_top(|ui| {
                             icons.ui_icon(ui, &app.attributes.bundle_id, title);
                             ui.add_space(8.0);
                             ui.vertical(|ui| {
@@ -617,10 +632,26 @@ impl AppleStore {
                                 ui.label(format!("App ID: {}", app.id));
                             });
                         });
+                        let response = ui.interact(
+                            row.response.rect,
+                            ui.id().with(("apple_app", &app.id)),
+                            egui::Sense::click(),
+                        );
+                        app_copy.context_menu(
+                            &response,
+                            Some(&crate::dashboard::StoreApp {
+                                identifier: app.attributes.bundle_id.clone(),
+                                name: title.clone(),
+                                store_id: app.id.clone(),
+                                store: crate::app_icons::Store::Apple,
+                            }),
+                            self.credentials.as_ref(),
+                        );
                         ui.add_space(8.0);
                     }
                 });
         }
+        self.app_copy_ui(ui.ctx());
         settings
     }
 

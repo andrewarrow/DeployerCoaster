@@ -394,6 +394,7 @@ impl Dashboard {
                         });
                 }
             });
+        apple.app_copy_ui(ui.ctx());
         command
     }
 }
