@@ -335,22 +335,22 @@ impl Names {
                             );
                             if ui
                                 .add_enabled(
-                                    !dirty,
+                                    !dirty && !rewritten_description.trim().is_empty(),
                                     egui::Button::new("Create website")
                                         .min_size([132.0, 60.0].into()),
                                 )
                                 .on_disabled_hover_text(
-                                    "Save the description before creating the website.",
+                                    if dirty {
+                                        "Save the description before creating the website."
+                                    } else {
+                                        "Rewrite the description before creating the website."
+                                    },
                                 )
                                 .clicked()
                             {
                                 command = Some(Command::CreateWebsite {
                                     name: name.clone(),
-                                    description: if rewritten_description.trim().is_empty() {
-                                        description.clone()
-                                    } else {
-                                        rewritten_description.clone()
-                                    },
+                                    description: rewritten_description.clone(),
                                 });
                             }
                             ui.end_row();

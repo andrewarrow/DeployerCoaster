@@ -104,6 +104,12 @@ fn names_page_adds_locally_and_fits_supported_sizes() {
         let pos = label_position(&output, "Add");
         output = click(&mut dashboard, pos, vec![]);
         label_position(&output, "1 name");
+        let create = label_position(&output, "Create website");
+        output = click(&mut dashboard, create, vec![]);
+        assert!(
+            action.borrow().is_none(),
+            "a new name without a rewritten description must disable creation"
+        );
         let pos = label_position(&output, "Description");
         output = click(&mut dashboard, pos, vec![]);
         let brief = "A thoughtful field journal — café 🌿\n\n".to_owned()
@@ -138,12 +144,10 @@ fn names_page_adds_locally_and_fits_supported_sizes() {
 
         let create = label_position(&output, "Create website");
         output = click(&mut dashboard, create, vec![]);
-        assert!(matches!(
-            action.borrow().as_ref(),
-            Some(Command::CreateWebsite { name: selected, description })
-                if selected == name.trim() && description == &brief
-        ));
-        action.borrow_mut().take();
+        assert!(
+            action.borrow().is_none(),
+            "a saved original without a rewritten description must disable creation"
+        );
 
         let rewrite = label_position(&output, "Rewrite description");
         let _ = click(&mut dashboard, rewrite, vec![]);
