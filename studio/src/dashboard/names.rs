@@ -309,6 +309,7 @@ impl Names {
                     let rewritten_description = &entry.rewritten_description;
                     let slug = name.to_lowercase().replace(' ', "-");
                     let url = format!("https://andrewarrow.dev/{slug}/");
+                    let privacy_url = format!("{url}privacy/");
                     let dirty = self
                         .description_drafts
                         .get(name)
@@ -326,11 +327,6 @@ impl Names {
                                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                                     ui.add(egui::Label::new(name).truncate())
                                         .on_hover_text(name);
-                                    ui.add(egui::Hyperlink::from_label_and_url(
-                                        "andrewarrow.dev",
-                                        &url,
-                                    ))
-                                    .on_hover_text(&url);
                                 },
                             );
                             if ui
@@ -355,6 +351,28 @@ impl Names {
                             }
                             ui.end_row();
                         });
+                    for (label, url) in [("website", &url), ("privacy", &privacy_url)] {
+                        ui.push_id((name, label), |ui| {
+                            ui.horizontal(|ui| {
+                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                                let link_width =
+                                    (ui.available_width() - 72.0 - ui.spacing().item_spacing.x)
+                                        .max(0.0);
+                                ui.add_sized(
+                                    [link_width, 44.0],
+                                    egui::Hyperlink::from_label_and_url(url, url),
+                                )
+                                .on_hover_text(url);
+                                if ui
+                                    .add(egui::Button::new("Copy").min_size([72.0, 44.0].into()))
+                                    .on_hover_text(format!("Copy {label} URL"))
+                                    .clicked()
+                                {
+                                    ui.ctx().copy_text(url.clone());
+                                }
+                            });
+                        });
+                    }
                     egui::CollapsingHeader::new("Description")
                         .id_salt(("name_description", name))
                         .show(ui, |ui| {
