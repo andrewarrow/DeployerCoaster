@@ -6,6 +6,7 @@ use std::{
 use crate::codex::{ChatGptAccount, CodexClient, CodexEvent, CodexWorkStatus};
 
 const MODELS: &[&str] = &[
+    "gpt-6.1-sol",
     "gpt-6-astra",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
@@ -137,6 +138,8 @@ impl Codex {
     pub(crate) fn create_website(&mut self, request: crate::website::WebsiteRequest) {
         self.root = request.root.clone();
         self.website_root = Some(request.root);
+        self.model = "gpt-6.1-sol";
+        self.effort = "xhigh";
         self.messages.clear();
         self.restart();
         self.draft = request.prompt;
