@@ -164,16 +164,27 @@ impl Names {
                 let action_width = 132.0;
                 let width = (ui.available_width() - action_width - ui.spacing().item_spacing.x)
                     .clamp(0.0, 600.0);
+                let row_height = 60.0;
                 egui::Grid::new("names_list")
                     .striped(true)
-                    .min_row_height(44.0)
+                    .min_row_height(row_height)
                     .show(ui, |ui| {
                         for name in &self.entries {
-                            ui.add_sized([width, 44.0], egui::Label::new(name).truncate())
-                                .on_hover_text(name);
+                            let slug = name.to_lowercase().replace(' ', "-");
+                            let url = format!("https://andrewarrow.dev/{slug}/");
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(width, row_height),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                                    ui.add(egui::Label::new(name).truncate())
+                                        .on_hover_text(name);
+                                    ui.add(egui::Hyperlink::new(&url));
+                                },
+                            );
                             if ui
                                 .add_sized(
-                                    [action_width, 44.0],
+                                    [action_width, row_height],
                                     egui::Button::new("Create website"),
                                 )
                                 .clicked()
