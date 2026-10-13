@@ -122,7 +122,7 @@ impl DesktopWindow {
             window,
             input,
             painter,
-            show_on_redraw: kind.is_some(),
+            show_on_redraw: true,
         })
     }
 }
@@ -154,7 +154,6 @@ impl Desktop {
             macos::install_native_menu(self.proxy.clone());
             macos::set_application_icon();
         }
-        self.app.command(commands::Command::Wizard);
         self.open_app_windows(event_loop);
         Ok(())
     }
