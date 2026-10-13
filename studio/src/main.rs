@@ -8,6 +8,8 @@ mod app_icons;
 mod apple;
 mod apple_sales;
 mod cloudflare_login;
+mod codex;
+mod codex_ui;
 mod commands;
 mod console_cookies;
 mod console_sync;

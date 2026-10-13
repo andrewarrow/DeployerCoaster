@@ -130,6 +130,7 @@ impl GitHub {
                     .map(|org| IconRequest {
                         key: org.login.clone(),
                         artwork_url: Some(org.avatar_url.clone()),
+                        store_id: None,
                     })
                     .collect(),
                 ctx,

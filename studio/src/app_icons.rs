@@ -34,6 +34,7 @@ enum IconSource {
 pub struct IconRequest {
     pub key: String,
     pub artwork_url: Option<String>,
+    pub store_id: Option<String>,
 }
 
 struct DecodedIcon {
@@ -210,9 +211,12 @@ impl AppIcons {
                     break;
                 }
                 let image = match source {
-                    IconSource::Store(Store::Apple) => {
-                        apple_icon(&http, &request.key, &cancellation)
-                    }
+                    IconSource::Store(Store::Apple) => apple_icon(
+                        &http,
+                        &request.key,
+                        request.store_id.as_deref(),
+                        &cancellation,
+                    ),
                     IconSource::Store(Store::Play) => play_icon(
                         &http,
                         &request.key,
@@ -250,9 +254,29 @@ impl AppIcons {
     }
 }
 
-fn apple_icon(http: &Client, bundle_id: &str, cancelled: &AtomicBool) -> Option<ColorImage> {
+fn apple_lookup_url(bundle_id: &str, store_id: Option<&str>) -> Option<Url> {
     let mut url = Url::parse("https://itunes.apple.com/lookup").ok()?;
-    url.query_pairs_mut().append_pair("bundleId", bundle_id);
+    let valid_store_id = store_id
+        .filter(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()));
+    {
+        let mut query = url.query_pairs_mut();
+        if let Some(store_id) = valid_store_id {
+            query.append_pair("id", store_id);
+        } else {
+            query.append_pair("bundleId", bundle_id);
+        }
+        query.append_pair("country", "us");
+    }
+    Some(url)
+}
+
+fn apple_icon(
+    http: &Client,
+    bundle_id: &str,
+    store_id: Option<&str>,
+    cancelled: &AtomicBool,
+) -> Option<ColorImage> {
+    let url = apple_lookup_url(bundle_id, store_id)?;
     let bytes = limited_get(http, url, MAX_PAGE_BYTES, cancelled)?;
     let response: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     let artwork = apple_artwork_url(&response, bundle_id)?;
@@ -531,6 +555,29 @@ mod tests {
     }
 
     #[test]
+    fn apple_lookup_prefers_numeric_store_id_and_scopes_it_to_us() {
+        let url = apple_lookup_url("com.example.app", Some("6745373309")).unwrap();
+        let query: HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(query.get("id").map(String::as_str), Some("6745373309"));
+        assert_eq!(query.get("country").map(String::as_str), Some("us"));
+        assert!(!query.contains_key("bundleId"));
+    }
+
+    #[test]
+    fn apple_lookup_falls_back_to_encoded_bundle_id_without_a_valid_store_id() {
+        for store_id in [None, Some(""), Some("12&bundleId=wrong")] {
+            let url = apple_lookup_url("com.example.app+test", store_id).unwrap();
+            let query: HashMap<_, _> = url.query_pairs().into_owned().collect();
+            assert_eq!(
+                query.get("bundleId").map(String::as_str),
+                Some("com.example.app+test")
+            );
+            assert_eq!(query.get("country").map(String::as_str), Some("us"));
+            assert!(!query.contains_key("id"));
+        }
+    }
+
+    #[test]
     fn cached_image_rebuilds_its_texture_for_a_new_native_context() {
         let mut icons = AppIcons::default();
         icons.icons.insert(
@@ -551,5 +598,47 @@ mod tests {
         });
         let second = &icons.icons["test.app"].texture.as_ref().unwrap().0;
         assert_ne!(first, *second);
+    }
+
+    #[test]
+    fn refreshed_icon_replaces_cached_pixels_and_invalidates_texture() {
+        let mut icons = AppIcons::default();
+        icons.insert_image(
+            "test.app".into(),
+            ColorImage::new([1, 1], vec![egui::Color32::WHITE]),
+        );
+        let context = Context::default();
+        let _ = context.run_ui(egui::RawInput::default(), |ui| {
+            icons.ui_icon(ui, "test.app", "Test");
+        });
+        assert!(icons.icons["test.app"].texture.is_some());
+
+        let replacement = ColorImage::new([1, 1], vec![egui::Color32::BLACK]);
+        icons.insert_image("test.app".into(), replacement.clone());
+        assert_eq!(icons.icons["test.app"].image.as_ref(), Some(&replacement));
+        assert!(icons.icons["test.app"].texture.is_none());
+    }
+
+    #[test]
+    fn refresh_cancels_the_old_batch_and_keeps_cached_artwork() {
+        let mut icons = AppIcons::default();
+        let image = ColorImage::new([1, 1], vec![egui::Color32::WHITE]);
+        icons.insert_image("test.app".into(), image.clone());
+        icons.attempted.insert("test.app".into());
+        icons.started = true;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (sender, receiver) = mpsc::channel();
+        icons.job = Some(Job {
+            receiver,
+            cancelled: cancelled.clone(),
+        });
+        drop(sender);
+
+        icons.refresh();
+
+        assert!(cancelled.load(Ordering::Relaxed));
+        assert!(icons.needs_start());
+        assert!(icons.attempted.is_empty());
+        assert_eq!(icons.icons["test.app"].image.as_ref(), Some(&image));
     }
 }

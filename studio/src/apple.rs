@@ -431,6 +431,7 @@ impl AppleStore {
                     .map(|app| crate::app_icons::IconRequest {
                         key: app.attributes.bundle_id.clone(),
                         artwork_url: None,
+                        store_id: Some(app.id.clone()),
                     })
                     .collect(),
                 ctx,
@@ -571,6 +572,7 @@ impl AppleStore {
                     .map(|app| crate::app_icons::IconRequest {
                         key: app.attributes.bundle_id.clone(),
                         artwork_url: None,
+                        store_id: Some(app.id.clone()),
                     })
                     .collect(),
                 ui.ctx(),

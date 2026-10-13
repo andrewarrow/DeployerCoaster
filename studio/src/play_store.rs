@@ -311,6 +311,7 @@ impl PlayStore {
                             .iter()
                             .find(|summary| summary.package_name == app.package_name)
                             .and_then(|summary| summary.icon_url.clone()),
+                        store_id: None,
                     })
                     .collect(),
                 ctx,
@@ -431,6 +432,7 @@ impl PlayStore {
                                 .iter()
                                 .find(|summary| summary.package_name == app.package_name)
                                 .and_then(|summary| summary.icon_url.clone()),
+                            store_id: None,
                         })
                         .collect(),
                     ui.ctx(),

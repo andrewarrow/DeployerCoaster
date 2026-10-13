@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[cfg(not(target_os = "macos"))]
 use egui::{Key, Modifiers};
@@ -17,17 +17,25 @@ enum SettingsSection {
     General,
     Android,
     Apple,
+    ChatGPT,
     Dynadot,
 }
 
 impl SettingsSection {
-    const ALL: [Self; 4] = [Self::General, Self::Android, Self::Apple, Self::Dynadot];
+    const ALL: [Self; 5] = [
+        Self::General,
+        Self::Android,
+        Self::Apple,
+        Self::ChatGPT,
+        Self::Dynadot,
+    ];
 
     fn label(self) -> &'static str {
         match self {
             Self::General => "General",
             Self::Android => "Android",
             Self::Apple => "Apple",
+            Self::ChatGPT => "ChatGPT",
             Self::Dynadot => "Dynadot",
         }
     }
@@ -57,6 +65,8 @@ pub struct App {
     pending_action: Option<PendingAction>,
     quit: bool,
     dashboard: crate::dashboard::Dashboard,
+    codex: crate::codex_ui::Codex,
+    codex_default_root: PathBuf,
     settings_section: SettingsSection,
     show_about: bool,
     status: Option<String>,
@@ -79,6 +89,11 @@ impl App {
             None => (Preferences::default(), None),
         };
 
+        let codex_default_root = std::env::current_dir()
+            .ok()
+            .or_else(dirs::home_dir)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let codex_root = codex_workspace_root(initial_path.as_deref(), &codex_default_root);
         let mut app = Self {
             preferences,
             preferences_path,
@@ -86,6 +101,8 @@ impl App {
             pending_action: None,
             quit: false,
             dashboard: crate::dashboard::Dashboard::default(),
+            codex: crate::codex_ui::Codex::new(codex_root),
+            codex_default_root,
             settings_section: SettingsSection::default(),
             show_about: false,
             status_is_error: preference_error.is_some(),
@@ -103,6 +120,7 @@ impl App {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        self.poll_codex(ui.ctx());
         self.dynadot.poll();
         self.play_store.poll();
         self.apple_store.set_credentials(self.apple.credentials());
@@ -198,6 +216,10 @@ impl App {
             });
         });
 
+        egui::Panel::top("chatgpt_connection")
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(16, 8)))
+            .show(ui, |ui| self.codex.toolbar(ui));
+
         if self.preferences.show_activity && self.status.is_some() {
             egui::Panel::bottom("activity_panel").show(ui, |ui| {
                 ui.label(self.status.as_deref().unwrap_or("Ready"));
@@ -238,14 +260,33 @@ impl App {
         }
         self.play_store.prepare_dashboard(&ctx);
         self.apple_store.prepare_dashboard(&ctx);
-        if let Some(command) = self.dashboard.ui(
-            ui,
-            &mut self.play_store,
-            &mut self.apple_store,
-            &mut self.dynadot,
-            self.preferences.show_sidebar,
-        ) {
-            selected_command = Some(command);
+        let workspace_path = self
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.path.clone());
+        let chat_full_width = self.codex.open && ui.available_width() < 1000.0;
+        if chat_full_width {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE.inner_margin(egui::Margin::same(16)))
+                .show(ui, |ui| self.codex.chat_ui(ui, workspace_path.as_deref()));
+        } else {
+            if self.codex.open {
+                egui::Panel::right("codex_chat")
+                    .resizable(true)
+                    .default_size(360.0)
+                    .size_range(300.0..=480.0)
+                    .frame(egui::Frame::NONE.inner_margin(egui::Margin::same(12)))
+                    .show(ui, |ui| self.codex.chat_ui(ui, workspace_path.as_deref()));
+            }
+            if let Some(command) = self.dashboard.ui(
+                ui,
+                &mut self.play_store,
+                &mut self.apple_store,
+                &mut self.dynadot,
+                self.preferences.show_sidebar,
+            ) {
+                selected_command = Some(command);
+            }
         }
         if let Some(status) = &self.status
             && (self.status_is_error || !self.preferences.show_activity)
@@ -269,6 +310,34 @@ impl App {
         }
         self.about_window(&ctx);
         self.discard_modal(&ctx);
+    }
+
+    fn poll_codex(&mut self, ctx: &egui::Context) {
+        let root = codex_workspace_root(
+            self.workspace
+                .as_ref()
+                .and_then(|workspace| workspace.path.as_deref()),
+            &self.codex_default_root,
+        );
+        self.codex.set_root(&root);
+        if self.codex.poll(ctx) {
+            self.refresh_workspace_after_codex();
+        }
+    }
+
+    fn refresh_workspace_after_codex(&mut self) {
+        if let Some(workspace) = &self.workspace {
+            if workspace.is_dirty() {
+                self.set_status("Codex finished. Unsaved workspace edits were kept; reopen the file to review changes on disk.");
+            } else if let Some(path) = workspace.path.clone() {
+                match Workspace::open(path) {
+                    Ok(updated) => self.workspace = Some(updated),
+                    Err(error) => self.set_error(format!(
+                        "Could not reload the workspace after Codex: {error}"
+                    )),
+                }
+            }
+        }
     }
 
     pub fn command(&mut self, command: Command) {
@@ -336,6 +405,7 @@ impl App {
 
     /// Returns true when the main window should be focused before opening Settings.
     pub fn app_window_ui(&mut self, window: AppWindow, ui: &mut egui::Ui) -> bool {
+        self.poll_codex(ui.ctx());
         ui.ctx().set_theme(self.preferences.appearance.theme());
         if window == AppWindow::Settings {
             self.store_settings(ui);
@@ -591,6 +661,7 @@ impl App {
                         match self.settings_section {
                             SettingsSection::Dynadot => self.dynadot.settings_ui(ui),
                             SettingsSection::General => self.appearance_settings(ui),
+                            SettingsSection::ChatGPT => self.codex.settings_ui(ui),
                             SettingsSection::Android => {
                                 ui.label(egui::RichText::new("Google Play Store").strong());
                                 ui.add_space(8.0);
@@ -690,6 +761,13 @@ impl App {
     }
 }
 
+fn codex_workspace_root(workspace_path: Option<&Path>, default_root: &Path) -> PathBuf {
+    workspace_path
+        .and_then(Path::parent)
+        .and_then(|parent| parent.canonicalize().ok())
+        .unwrap_or_else(|| default_root.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,6 +780,8 @@ mod tests {
             pending_action: None,
             quit: false,
             dashboard: crate::dashboard::Dashboard::default(),
+            codex: crate::codex_ui::Codex::test_disconnected(std::env::current_dir().unwrap()),
+            codex_default_root: std::env::current_dir().unwrap(),
             settings_section: SettingsSection::default(),
             show_about: false,
             status: None,
@@ -712,6 +792,47 @@ mod tests {
             dynadot: crate::dynadot::Dynadot::default(),
             requested_app_windows: Vec::new(),
         }
+    }
+
+    #[test]
+    fn codex_refresh_reloads_saved_workspaces_and_preserves_unsaved_edits() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("test.dcstudio");
+        let workspace = Workspace::new();
+        workspace.document.save(&path).unwrap();
+        let mut app = app_with_workspace(Workspace::open(path.clone()).unwrap());
+        let mut updated = workspace.document.clone();
+        updated.name = "Codex edit".into();
+        updated.save(&path).unwrap();
+        app.refresh_workspace_after_codex();
+        assert_eq!(app.workspace.as_ref().unwrap().document.name, "Codex edit");
+        assert!(!app.workspace.as_ref().unwrap().is_dirty());
+        app.workspace.as_mut().unwrap().document.name = "My unsaved edit".into();
+        updated.name = "Second Codex edit".into();
+        updated.save(&path).unwrap();
+        app.refresh_workspace_after_codex();
+        assert_eq!(
+            app.workspace.as_ref().unwrap().document.name,
+            "My unsaved edit"
+        );
+        assert!(app.workspace.as_ref().unwrap().is_dirty());
+    }
+
+    #[test]
+    fn codex_invalid_workspace_edits_keep_the_last_valid_document_and_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("test.dcstudio");
+        Workspace::new().document.save(&path).unwrap();
+        let mut app = app_with_workspace(Workspace::open(path.clone()).unwrap());
+        std::fs::write(&path, "invalid JSON").unwrap();
+        app.refresh_workspace_after_codex();
+        assert_eq!(app.workspace.as_ref().unwrap().document.name, "Untitled");
+        assert!(app.status_is_error);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            codex_workspace_root(Some(&path), Path::new("/elsewhere")),
+            directory.path().canonicalize().unwrap()
+        );
     }
 
     #[test]
