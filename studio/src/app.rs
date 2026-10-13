@@ -140,7 +140,9 @@ impl App {
         if self.pending_action.is_none() {
             self.keyboard_shortcuts(&ctx);
         }
-        self.studio_view.ui(ui);
+        self.apple_store.set_credentials(self.apple.credentials());
+        self.studio_view
+            .ui(ui, &mut self.apple_store, &mut self.play_store);
         self.about_window(&ctx);
         self.discard_modal(&ctx);
     }
