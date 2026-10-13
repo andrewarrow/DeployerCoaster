@@ -74,6 +74,7 @@ pub struct App {
     workspace: Option<Workspace>,
     pending_action: Option<PendingAction>,
     quit: bool,
+    studio_view: crate::studio_view::StudioView,
     dashboard: crate::dashboard::Dashboard,
     codex: crate::codex_ui::Codex,
     codex_default_root: PathBuf,
@@ -111,6 +112,7 @@ impl App {
             workspace: None,
             pending_action: None,
             quit: false,
+            studio_view: crate::studio_view::StudioView::default(),
             dashboard: crate::dashboard::Dashboard::load(),
             codex: crate::codex_ui::Codex::new(codex_root),
             codex_default_root,
@@ -132,6 +134,20 @@ impl App {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        ctx.set_theme(self.preferences.appearance.theme());
+        #[cfg(not(target_os = "macos"))]
+        if self.pending_action.is_none() {
+            self.keyboard_shortcuts(&ctx);
+        }
+        self.studio_view.ui(ui);
+        self.about_window(&ctx);
+        self.discard_modal(&ctx);
+    }
+
+    // Keep the previous main view intact while the new platform views are built.
+    #[allow(dead_code)]
+    fn legacy_ui(&mut self, ui: &mut egui::Ui) {
         self.poll_codex(ui.ctx());
         self.dynadot.poll();
         self.play_store.poll();
@@ -821,6 +837,7 @@ mod tests {
             workspace: Some(workspace),
             pending_action: None,
             quit: false,
+            studio_view: crate::studio_view::StudioView::default(),
             dashboard: crate::dashboard::Dashboard::default(),
             codex: crate::codex_ui::Codex::test_disconnected(std::env::current_dir().unwrap()),
             codex_default_root: std::env::current_dir().unwrap(),

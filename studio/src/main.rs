@@ -3,6 +3,7 @@
     windows_subsystem = "windows"
 )]
 
+mod android_view;
 mod app;
 mod app_icons;
 mod apple;
@@ -19,6 +20,7 @@ mod description;
 mod dynadot;
 mod github;
 mod google_oauth;
+mod ios_view;
 #[cfg(target_os = "macos")]
 mod macos;
 mod metadata;
@@ -26,6 +28,7 @@ mod play_console;
 mod play_store;
 mod preferences;
 mod storage;
+mod studio_view;
 mod style;
 mod website;
 mod wizard;
