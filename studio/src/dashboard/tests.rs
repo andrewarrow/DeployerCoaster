@@ -123,14 +123,54 @@ fn names_page_adds_locally_and_fits_supported_sizes() {
             action.borrow().is_none(),
             "a dirty description must disable creation"
         );
+        let rewrite = label_position(&output, "Rewrite description");
+        let _ = click(&mut dashboard, rewrite, vec![]);
+        assert!(
+            action.borrow().is_none(),
+            "a dirty original description must disable rewriting"
+        );
         let pos = label_position(&output, "Save description");
         output = click(&mut dashboard, pos, vec![]);
         label_position(&output, "Description saved.");
+        label_position(&output, "Original description");
+        label_position(&output, "Rewritten description");
+        label_position(&output, "No rewritten description yet.");
+
+        let create = label_position(&output, "Create website");
+        output = click(&mut dashboard, create, vec![]);
+        assert!(matches!(
+            action.borrow().as_ref(),
+            Some(Command::CreateWebsite { name: selected, description })
+                if selected == name.trim() && description == &brief
+        ));
+        action.borrow_mut().take();
+
+        let rewrite = label_position(&output, "Rewrite description");
+        let _ = click(&mut dashboard, rewrite, vec![]);
+        assert!(matches!(
+            action.borrow().as_ref(),
+            Some(Command::RewriteDescription { name: selected, description })
+                if selected == name.trim() && description == &brief
+        ));
+        action.borrow_mut().take();
+        let rewritten = format!("A useful website brief for {}.", name.trim());
+        dashboard
+            .receive_rewritten_description(name.trim(), &brief, &rewritten)
+            .unwrap();
+        output = click(&mut dashboard, pos2(width - 1.0, height - 1.0), vec![]);
+        label_position(&output, "Original description");
+        label_position(&output, "Rewritten description");
+        label_position(
+            &output,
+            &format!("{} / 3999 characters", rewritten.chars().count()),
+        );
+        label_position(&output, &rewritten);
 
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved[0]["name"], name.trim());
         assert_eq!(saved[0]["description"], brief);
+        assert_eq!(saved[0]["rewritten_description"], rewritten);
 
         dashboard.names = names::Names::from_path(path);
         output = click(&mut dashboard, pos2(width - 1.0, height - 1.0), vec![]);
@@ -138,7 +178,7 @@ fn names_page_adds_locally_and_fits_supported_sizes() {
         let pos = label_position(&output, "Create website");
         let _ = click(&mut dashboard, pos, vec![]);
         assert!(
-            matches!(action.borrow().as_ref(), Some(Command::CreateWebsite { name: selected, description }) if selected == name.trim() && description == &brief)
+            matches!(action.borrow().as_ref(), Some(Command::CreateWebsite { name: selected, description }) if selected == name.trim() && description == &rewritten)
         );
     }
 }

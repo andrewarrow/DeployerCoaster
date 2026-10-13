@@ -5,6 +5,9 @@ fn test_codex() -> Codex {
         client: None,
         root: PathBuf::from("/workspace/a-very-long-workspace-directory-name"),
         website_root: None,
+        description_rewrite: None,
+        rewrite_response: None,
+        rewritten_description: None,
         auto_send: false,
         account: Some(ChatGptAccount {
             email: Some("a-long-account-address@example.com".into()),

@@ -4,6 +4,10 @@ use std::{
 };
 
 use crate::codex::{ChatGptAccount, CodexClient, CodexEvent, CodexWorkStatus};
+use crate::description::{DescriptionRewriteRequest, RewrittenDescription};
+
+const GENERATION_MODEL: &str = "gpt-6.1-sol";
+const GENERATION_EFFORT: &str = "xhigh";
 
 const MODELS: &[&str] = &[
     "gpt-6.1-sol",
@@ -23,6 +27,9 @@ pub(crate) struct Codex {
     client: Option<CodexClient>,
     root: PathBuf,
     website_root: Option<PathBuf>,
+    description_rewrite: Option<DescriptionRewriteRequest>,
+    rewrite_response: Option<String>,
+    rewritten_description: Option<RewrittenDescription>,
     auto_send: bool,
     account: Option<ChatGptAccount>,
     checking: bool,
@@ -55,6 +62,9 @@ impl Codex {
             client: None,
             root,
             website_root: None,
+            description_rewrite: None,
+            rewrite_response: None,
+            rewritten_description: None,
             auto_send: false,
             account: None,
             checking: false,
@@ -94,6 +104,7 @@ impl Codex {
         self.busy = false;
         self.cancelling = false;
         self.streaming_message = None;
+        self.rewrite_response = None;
         self.sent_draft = None;
         self.activity.clear();
         self.error = None;
@@ -107,7 +118,7 @@ impl Codex {
     }
 
     pub(crate) fn set_root(&mut self, root: &Path) {
-        if self.website_root.is_some() {
+        if self.website_root.is_some() || self.description_rewrite.is_some() {
             return;
         }
         let root = root.canonicalize().unwrap_or_else(|_| root.to_owned());
@@ -124,13 +135,19 @@ impl Codex {
     }
 
     pub(crate) fn can_create_website(&self) -> Result<(), String> {
+        self.can_start_generation("creating a website")
+    }
+
+    pub(crate) fn can_rewrite_description(&self) -> Result<(), String> {
+        self.can_start_generation("rewriting a description")
+    }
+
+    fn can_start_generation(&self, action: &str) -> Result<(), String> {
         if self.busy || self.auto_send {
-            return Err(
-                "Finish or cancel the current Codex request before creating a website.".into(),
-            );
+            return Err(format!("Finish or cancel the current Codex request before {action}."));
         }
         if !self.draft.trim().is_empty() {
-            return Err("Send or clear your Codex draft before creating a website.".into());
+            return Err(format!("Send or clear your Codex draft before {action}."));
         }
         Ok(())
     }
@@ -138,18 +155,38 @@ impl Codex {
     pub(crate) fn create_website(&mut self, request: crate::website::WebsiteRequest) {
         self.root = request.root.clone();
         self.website_root = Some(request.root);
-        self.model = "gpt-6.1-sol";
-        self.effort = "xhigh";
+        self.description_rewrite = None;
+        self.start_generation(request.prompt);
+    }
+
+    pub(crate) fn rewrite_description(&mut self, request: DescriptionRewriteRequest, root: &Path) {
+        self.root = root.to_owned();
+        self.website_root = None;
+        let prompt = request.prompt.clone();
+        self.description_rewrite = Some(request);
+        self.start_generation(prompt);
+    }
+
+    fn start_generation(&mut self, prompt: String) {
+        self.model = GENERATION_MODEL;
+        self.effort = GENERATION_EFFORT;
+        self.rewritten_description = None;
         self.messages.clear();
         self.restart();
-        self.draft = request.prompt;
+        self.draft = prompt;
         self.auto_send = true;
         self.open = true;
     }
 
     pub(crate) fn return_to_workspace(&mut self) {
         self.website_root = None;
+        self.description_rewrite = None;
+        self.rewrite_response = None;
         self.auto_send = false;
+    }
+
+    pub(crate) fn take_rewritten_description(&mut self) -> Option<RewrittenDescription> {
+        self.rewritten_description.take()
     }
 
     /// A completed or interrupted turn may have written workspace files.
@@ -215,6 +252,9 @@ impl Codex {
                     self.messages[index].text.push_str(&delta);
                 }
                 CodexEvent::AssistantMessage(text) => {
+                    if self.description_rewrite.is_some() && self.busy {
+                        self.rewrite_response = Some(text.clone());
+                    }
                     if let Some(index) = self.streaming_message.take() {
                         self.messages[index].text = text;
                     } else if !text.is_empty() {
@@ -222,6 +262,15 @@ impl Codex {
                     }
                 }
                 CodexEvent::ChatTurnCompleted => {
+                    if self.busy && let Some(request) = &self.description_rewrite {
+                        let response = self.rewrite_response.take().or_else(|| {
+                            self.streaming_message.map(|index| self.messages[index].text.clone())
+                        }).unwrap_or_default();
+                        match request.complete(&response) {
+                            Ok(description) => self.rewritten_description = Some(description),
+                            Err(error) => self.error = Some(error),
+                        }
+                    }
                     self.finish_turn();
                     changed = true;
                 }
@@ -287,13 +336,14 @@ impl Codex {
         if self.checking || self.login_pending || self.opening || self.busy {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
-        changed && self.website_root.is_none()
+        changed && self.website_root.is_none() && self.description_rewrite.is_none()
     }
 
     fn finish_turn(&mut self) {
         self.busy = false;
         self.cancelling = false;
         self.streaming_message = None;
+        self.rewrite_response = None;
         self.sent_draft = None;
         self.activity.clear();
     }
@@ -411,6 +461,8 @@ impl Codex {
                     )
                     .clicked()
                 {
+                    self.description_rewrite = None;
+                    self.rewrite_response = None;
                     self.messages.clear();
                     self.restart();
                 }
@@ -497,7 +549,11 @@ impl Codex {
                     ui.spinner();
                     ui.label("Starting Codex…");
                 } else if self.account.is_none() {
-                    ui.label("Connect ChatGPT to create the website.");
+                    ui.label(if self.description_rewrite.is_some() {
+                        "Connect ChatGPT to rewrite the description."
+                    } else {
+                        "Connect ChatGPT to create the website."
+                    });
                 }
                 if ui.button("Cancel").clicked() {
                     self.auto_send = false;
@@ -561,7 +617,7 @@ impl Codex {
         let text = self.draft.trim().to_owned();
         let message = contextual_message(
             &text,
-            if self.website_root.is_some() {
+            if self.website_root.is_some() || self.description_rewrite.is_some() {
                 None
             } else {
                 workspace_path
@@ -574,6 +630,7 @@ impl Codex {
             .send_chat_message(message, self.model.into(), self.effort.into())
         {
             Ok(()) => {
+                self.rewrite_response = None;
                 self.messages.push(ChatMessage { user: true, text });
                 self.sent_draft = Some(std::mem::take(&mut self.draft));
                 self.busy = true;

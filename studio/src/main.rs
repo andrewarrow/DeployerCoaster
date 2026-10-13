@@ -14,6 +14,7 @@ mod commands;
 mod console_cookies;
 mod console_sync;
 mod dashboard;
+mod description;
 mod dynadot;
 mod github;
 mod google_oauth;

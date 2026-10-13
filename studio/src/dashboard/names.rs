@@ -7,6 +7,8 @@ struct NameEntry {
     name: String,
     #[serde(default)]
     description: String,
+    #[serde(default)]
+    rewritten_description: String,
 }
 
 #[derive(Deserialize)]
@@ -25,6 +27,7 @@ impl NamesFile {
                 .map(|name| NameEntry {
                     name,
                     description: String::new(),
+                    rewritten_description: String::new(),
                 })
                 .collect(),
         }
@@ -38,6 +41,8 @@ pub(super) struct Names {
     draft: Option<String>,
     description_drafts: HashMap<String, String>,
     description_messages: HashMap<String, String>,
+    rewritten_drafts: HashMap<String, (String, String)>,
+    rewritten_messages: HashMap<String, String>,
     focus_input: bool,
     error: Option<String>,
 }
@@ -112,6 +117,7 @@ impl Names {
         entries.push(NameEntry {
             name: name.to_owned(),
             description: String::new(),
+            rewritten_description: String::new(),
         });
         entries.sort_by_cached_key(|entry| entry.name.to_lowercase());
         if let Err(error) = self.persist(&entries) {
@@ -157,8 +163,67 @@ impl Names {
         Ok(())
     }
 
-    pub(super) fn ui(&mut self, ui: &mut egui::Ui) -> Option<(String, String)> {
-        let mut create_website = None;
+    pub(super) fn receive_rewritten_description(
+        &mut self,
+        name: &str,
+        original: &str,
+        rewritten: &str,
+    ) -> Result<(), String> {
+        crate::description::validate_rewritten_description(name, rewritten)?;
+        let Some(current) = self.entries.iter().find(|entry| entry.name == name) else {
+            let error =
+                "This name is no longer available; the rewritten description was not saved.";
+            self.rewritten_messages
+                .insert(name.to_owned(), error.into());
+            return Err(error.into());
+        };
+        if current.description != original {
+            let error = "The original description changed while rewriting. Save the current original and rewrite it again.";
+            self.rewritten_messages
+                .insert(name.to_owned(), error.into());
+            return Err(error.into());
+        }
+
+        self.rewritten_drafts
+            .insert(name.to_owned(), (original.to_owned(), rewritten.to_owned()));
+        self.save_rewritten_description(name)
+    }
+
+    fn save_rewritten_description(&mut self, name: &str) -> Result<(), String> {
+        let (original, rewritten) = self
+            .rewritten_drafts
+            .get(name)
+            .cloned()
+            .ok_or("There is no rewritten description to save.")?;
+        let mut entries = self.entries.clone();
+        let entry = entries
+            .iter_mut()
+            .find(|entry| entry.name == name)
+            .ok_or("This name is no longer available.")?;
+        if entry.description != original {
+            let error = "The original description changed while rewriting. Save the current original and rewrite it again.";
+            self.rewritten_messages
+                .insert(name.to_owned(), error.into());
+            return Err(error.into());
+        }
+        entry.rewritten_description = rewritten;
+        if let Err(error) = self.persist(&entries) {
+            log::warn!("Could not save rewritten description for {name}: {error}");
+            let message = "Could not save the rewritten description. Check storage permissions and try again.";
+            self.rewritten_messages
+                .insert(name.to_owned(), message.into());
+            return Err(message.into());
+        }
+        self.entries = entries;
+        self.rewritten_drafts.remove(name);
+        self.rewritten_messages.remove(name);
+        Ok(())
+    }
+
+    pub(super) fn ui(&mut self, ui: &mut egui::Ui) -> Option<crate::commands::Command> {
+        use crate::commands::Command;
+
+        let mut command = None;
         ui.horizontal_wrapped(|ui| {
             ui.heading("Names");
             if ui
@@ -231,6 +296,7 @@ impl Names {
             return None;
         }
         let mut save_description = None;
+        let mut retry_rewritten = None;
         let content_width = ui.available_width().min(740.0);
         egui::ScrollArea::vertical()
             .id_salt("local_names")
@@ -240,6 +306,7 @@ impl Names {
                 for entry in &self.entries {
                     let name = &entry.name;
                     let description = &entry.description;
+                    let rewritten_description = &entry.rewritten_description;
                     let slug = name.to_lowercase().replace(' ', "-");
                     let url = format!("https://andrewarrow.dev/{slug}/");
                     let dirty = self
@@ -277,7 +344,14 @@ impl Names {
                                 )
                                 .clicked()
                             {
-                                create_website = Some((name.clone(), description.clone()));
+                                command = Some(Command::CreateWebsite {
+                                    name: name.clone(),
+                                    description: if rewritten_description.trim().is_empty() {
+                                        description.clone()
+                                    } else {
+                                        rewritten_description.clone()
+                                    },
+                                });
                             }
                             ui.end_row();
                         });
@@ -288,7 +362,7 @@ impl Names {
                                 .description_drafts
                                 .entry(name.clone())
                                 .or_insert_with(|| description.clone());
-                            let label = ui.label("Product description");
+                            let label = ui.label("Original description");
                             let response = egui::ScrollArea::vertical()
                                 .id_salt(("description_editor", name))
                                 .max_height(160.0)
@@ -324,6 +398,31 @@ impl Names {
                                     ui.label("Unsaved changes");
                                 }
                             });
+                            ui.horizontal_wrapped(|ui| {
+                                if ui
+                                    .add_enabled(
+                                        !description.trim().is_empty()
+                                            && !dirty
+                                            && self.path.is_some(),
+                                        egui::Button::new("Rewrite description")
+                                            .min_size([176.0, 44.0].into()),
+                                    )
+                                    .on_disabled_hover_text(if dirty {
+                                        "Save the original description before rewriting it."
+                                    } else {
+                                        "Save a non-empty original description before rewriting it."
+                                    })
+                                    .clicked()
+                                {
+                                    command = Some(Command::RewriteDescription {
+                                        name: name.clone(),
+                                        description: description.clone(),
+                                    });
+                                }
+                                if dirty {
+                                    ui.label("Save changes before rewriting.");
+                                }
+                            });
                             if let Some(message) = self.description_messages.get(name) {
                                 let color = if message.starts_with("Could not") {
                                     ui.visuals().error_fg_color
@@ -335,6 +434,61 @@ impl Names {
                                         .wrap(),
                                 );
                             }
+                            ui.add_space(8.0);
+                            ui.label("Rewritten description");
+                            let pending_rewrite = self.rewritten_drafts.get(name).cloned();
+                            let shown_rewrite = pending_rewrite
+                                .as_ref()
+                                .map(|(_, text)| text.as_str())
+                                .unwrap_or(rewritten_description);
+                            let pending_matches_source = pending_rewrite
+                                .as_ref()
+                                .is_some_and(|(pending_original, _)| pending_original == description);
+                            if shown_rewrite.is_empty() {
+                                ui.label("No rewritten description yet.");
+                            } else {
+                                ui.label(format!(
+                                    "{} / 3999 characters",
+                                    shown_rewrite.chars().count()
+                                ));
+                                egui::ScrollArea::vertical()
+                                    .id_salt(("rewritten_description", name))
+                                    .max_height(160.0)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.add(
+                                            egui::Label::new(shown_rewrite)
+                                                .selectable(true)
+                                                .wrap(),
+                                        );
+                                    });
+                                if pending_matches_source {
+                                    if ui
+                                        .add_enabled(
+                                            self.path.is_some(),
+                                            egui::Button::new("Retry save")
+                                                .min_size([112.0, 44.0].into()),
+                                        )
+                                        .clicked()
+                                    {
+                                        retry_rewritten = Some(name.clone());
+                                    }
+                                } else if pending_rewrite.is_some() {
+                                    ui.label(
+                                        "The original changed. Rewrite it again to save a matching copy.",
+                                    );
+                                }
+                            }
+                            if let Some(message) = self.rewritten_messages.get(name) {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(message)
+                                            .color(ui.visuals().error_fg_color),
+                                    )
+                                    .wrap(),
+                                );
+                            }
                         });
                     ui.add_space(4.0);
                 }
@@ -344,7 +498,12 @@ impl Names {
                 self.description_messages.insert(name, error);
             }
         }
-        create_website
+        if let Some(name) = retry_rewritten
+            && let Err(error) = self.save_rewritten_description(&name)
+        {
+            self.rewritten_messages.insert(name, error);
+        }
+        command
     }
 }
 
@@ -390,6 +549,7 @@ mod tests {
         let mut names = Names::from_path(path.clone());
         assert_eq!(names.entries[0].name, "Example");
         assert_eq!(names.entries[0].description, "");
+        assert_eq!(names.entries[0].rewritten_description, "");
 
         let description = format!(
             "Product brief — café 🪴\n{}",
@@ -401,6 +561,164 @@ mod tests {
         names.save_description("Example").unwrap();
         let reopened = Names::from_path(path);
         assert_eq!(reopened.entries[0].description, description);
+        assert_eq!(reopened.entries[0].rewritten_description, "");
+    }
+
+    #[test]
+    fn loads_old_object_records_and_round_trips_rewritten_descriptions() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("names.json");
+        fs::write(
+            &path,
+            br#"[{"name":"Example","description":"Original brief"}]"#,
+        )
+        .unwrap();
+        let mut names = Names::from_path(path.clone());
+        assert_eq!(names.entries[0].rewritten_description, "");
+        names
+            .receive_rewritten_description(
+                "Example",
+                "Original brief",
+                "A clear rewritten brief for Example.",
+            )
+            .unwrap();
+        let reopened = Names::from_path(path);
+        assert_eq!(reopened.entries[0].description, "Original brief");
+        assert_eq!(
+            reopened.entries[0].rewritten_description,
+            "A clear rewritten brief for Example."
+        );
+    }
+
+    #[test]
+    fn changing_or_clearing_original_keeps_rewritten_copy() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("names.json");
+        let mut names = Names::from_path(path.clone());
+        names.draft = Some("Example".into());
+        names.add().unwrap();
+        names
+            .description_drafts
+            .insert("Example".into(), "Original for Example".into());
+        names.save_description("Example").unwrap();
+        names
+            .receive_rewritten_description(
+                "Example",
+                "Original for Example",
+                "Rewritten for Example.",
+            )
+            .unwrap();
+        names
+            .description_drafts
+            .insert("Example".into(), "Updated original".into());
+        names.save_description("Example").unwrap();
+        assert_eq!(
+            names.entries[0].rewritten_description,
+            "Rewritten for Example."
+        );
+        names
+            .description_drafts
+            .insert("Example".into(), String::new());
+        names.save_description("Example").unwrap();
+        let reopened = Names::from_path(path);
+        assert_eq!(reopened.entries[0].description, "");
+        assert_eq!(
+            reopened.entries[0].rewritten_description,
+            "Rewritten for Example."
+        );
+    }
+
+    #[test]
+    fn failed_rewrite_save_keeps_result_for_retry_and_preserves_saved_copy() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("names.json");
+        let mut names = Names::from_path(path.clone());
+        names.draft = Some("Example".into());
+        names.add().unwrap();
+        names
+            .description_drafts
+            .insert("Example".into(), "Original for Example".into());
+        names.save_description("Example").unwrap();
+        names
+            .receive_rewritten_description(
+                "Example",
+                "Original for Example",
+                "Previous copy for Example.",
+            )
+            .unwrap();
+        let saved = fs::read(&path).unwrap();
+        names.path = Some(directory.path().join("blocked/names.json"));
+        fs::write(directory.path().join("blocked"), b"not a directory").unwrap();
+        assert!(
+            names
+                .receive_rewritten_description(
+                    "Example",
+                    "Original for Example",
+                    "New returned copy for Example.",
+                )
+                .is_err()
+        );
+        assert_eq!(
+            names.rewritten_drafts["Example"].1,
+            "New returned copy for Example."
+        );
+        assert_eq!(names.entries[0].description, "Original for Example");
+        assert_eq!(
+            names.entries[0].rewritten_description,
+            "Previous copy for Example."
+        );
+        assert_eq!(fs::read(path).unwrap(), saved);
+    }
+
+    #[test]
+    fn stale_rewrite_is_rejected_and_rewrites_stay_with_each_name() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("names.json");
+        let mut names = Names::from_path(path.clone());
+        for name in ["Alpha", "Beta"] {
+            names.draft = Some(name.into());
+            names.add().unwrap();
+            names
+                .description_drafts
+                .insert(name.into(), format!("Original for {name}"));
+            names.save_description(name).unwrap();
+        }
+        assert!(
+            names
+                .receive_rewritten_description(
+                    "Alpha",
+                    "Outdated original",
+                    "Stale rewritten text for Alpha.",
+                )
+                .is_err()
+        );
+        assert!(!names.rewritten_drafts.contains_key("Alpha"));
+        names
+            .receive_rewritten_description(
+                "Alpha",
+                "Original for Alpha",
+                "Rewritten text for Alpha.",
+            )
+            .unwrap();
+        names
+            .receive_rewritten_description("Beta", "Original for Beta", "Rewritten text for Beta.")
+            .unwrap();
+        let reopened = Names::from_path(path);
+        let copies: HashMap<_, _> = reopened
+            .entries
+            .into_iter()
+            .map(|entry| (entry.name, entry.rewritten_description))
+            .collect();
+        assert_eq!(copies["Alpha"], "Rewritten text for Alpha.");
+        assert_eq!(copies["Beta"], "Rewritten text for Beta.");
+    }
+
+    #[test]
+    fn rewritten_description_validation_counts_unicode_characters() {
+        let below = format!("Example{}", "🌿".repeat(3992));
+        assert!(crate::description::validate_rewritten_description("Example", &below).is_ok());
+        let at_limit = format!("Example{}", "🌿".repeat(3993));
+        assert!(crate::description::validate_rewritten_description("Example", &at_limit).is_err());
     }
 
     #[test]

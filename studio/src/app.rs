@@ -323,6 +323,16 @@ impl App {
         if self.codex.poll(ctx) {
             self.refresh_workspace_after_codex();
         }
+        if let Some(result) = self.codex.take_rewritten_description() {
+            match self.dashboard.receive_rewritten_description(
+                &result.name,
+                &result.original,
+                &result.description,
+            ) {
+                Ok(()) => self.set_status(format!("Rewritten description saved for {}.", result.name)),
+                Err(error) => self.set_error(error),
+            }
+        }
     }
 
     fn refresh_workspace_after_codex(&mut self) {
@@ -344,6 +354,19 @@ impl App {
         match command {
             Command::OpenWorkspace => self.request_action(PendingAction::Open),
             Command::OpenPath(path) => self.request_action(PendingAction::OpenPath(path)),
+            Command::RewriteDescription { name, description } => {
+                let request = self.codex.can_rewrite_description().and_then(|()| {
+                    crate::description::DescriptionRewriteRequest::new(&name, &description)
+                });
+                match request {
+                    Ok(request) => {
+                        self.codex.rewrite_description(request, &self.codex_default_root);
+                        self.status = None;
+                        self.status_is_error = false;
+                    }
+                    Err(error) => self.set_error(error),
+                }
+            }
             Command::CreateWebsite { name, description } => {
                 let request = self.codex.can_create_website().and_then(|()| {
                     crate::website::WebsiteRequest::prepare(
