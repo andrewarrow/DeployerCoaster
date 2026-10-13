@@ -51,7 +51,7 @@ struct DesktopWindow {
     window: Arc<Window>,
     input: egui_winit::State,
     painter: Painter,
-    shown: bool,
+    show_on_redraw: bool,
 }
 
 impl DesktopWindow {
@@ -122,7 +122,7 @@ impl DesktopWindow {
             window,
             input,
             painter,
-            shown: false,
+            show_on_redraw: kind.is_some(),
         })
     }
 }
@@ -154,6 +154,8 @@ impl Desktop {
             macos::install_native_menu(self.proxy.clone());
             macos::set_application_icon();
         }
+        self.app.command(commands::Command::Wizard);
+        self.open_app_windows(event_loop);
         Ok(())
     }
 
@@ -178,6 +180,7 @@ impl Desktop {
 
     fn focus_main_window(&self) {
         if let Some(main) = self.windows.iter().find(|window| window.kind.is_none()) {
+            main.window.set_visible(true);
             main.window.set_minimized(false);
             main.window.focus_window();
             main.window.request_redraw();
@@ -243,9 +246,9 @@ impl Desktop {
         if desktop.kind.is_none() {
             desktop.window.set_title(&self.app.title());
         }
-        if !desktop.shown {
+        if desktop.show_on_redraw {
             desktop.window.set_visible(true);
-            desktop.shown = true;
+            desktop.show_on_redraw = false;
         }
         if let Some(deadline) = output
             .viewport_output
