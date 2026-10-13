@@ -19,7 +19,8 @@ fn render(
             action = wizard.ui(ui, codex, Path::new("/unused"));
             assert!(
                 ui.min_rect().right() <= size[0],
-                "Wizard overflow at {size:?}: {:?}", ui.min_rect()
+                "Wizard overflow at {size:?}: {:?}",
+                ui.min_rect()
             );
         },
     );

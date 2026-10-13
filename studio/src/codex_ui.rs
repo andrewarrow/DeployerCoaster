@@ -152,7 +152,9 @@ impl Codex {
 
     fn can_start_generation(&self, action: &str) -> Result<(), String> {
         if self.busy || self.auto_send {
-            return Err(format!("Finish or cancel the current Codex request before {action}."));
+            return Err(format!(
+                "Finish or cancel the current Codex request before {action}."
+            ));
         }
         if !self.draft.trim().is_empty() {
             return Err(format!("Send or clear your Codex draft before {action}."));
@@ -258,7 +260,9 @@ impl Codex {
         };
         if !has_request {
             ui.label(stopped);
-            return ui.add(egui::Button::new(retry_label).min_size(egui::vec2(112.0, 44.0))).clicked();
+            return ui
+                .add(egui::Button::new(retry_label).min_size(egui::vec2(112.0, 44.0)))
+                .clicked();
         }
         if let Some(error) = &self.error {
             ui.add(
@@ -290,8 +294,15 @@ impl Codex {
                 .on_hover_text(&self.activity);
         }
         if let Some(message) = self.messages.iter().rev().find(|message| !message.user) {
-            let preview = message.text.chars().rev().take(600).collect::<String>()
-                .chars().rev().collect::<String>();
+            let preview = message
+                .text
+                .chars()
+                .rev()
+                .take(600)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>();
             egui::ScrollArea::vertical()
                 .id_salt("wizard_codex_output")
                 .max_height(120.0)
@@ -301,13 +312,20 @@ impl Codex {
                     ui.add(egui::Label::new(egui::RichText::new(preview).small()).wrap());
                 });
         }
-        if self.available && self.account.is_none() && !self.checking && !self.login_pending
-            && self.error.is_none() && ui.button("Connect ChatGPT").clicked()
+        if self.available
+            && self.account.is_none()
+            && !self.checking
+            && !self.login_pending
+            && self.error.is_none()
+            && ui.button("Connect ChatGPT").clicked()
         {
             self.begin_login();
         }
-        !self.busy && (self.error.is_some() || !self.auto_send)
-            && ui.add(egui::Button::new(retry_label).min_size(egui::vec2(112.0, 44.0))).clicked()
+        !self.busy
+            && (self.error.is_some() || !self.auto_send)
+            && ui
+                .add(egui::Button::new(retry_label).min_size(egui::vec2(112.0, 44.0)))
+                .clicked()
     }
 
     /// A completed or interrupted turn may have written workspace files.
@@ -383,16 +401,25 @@ impl Codex {
                     }
                 }
                 CodexEvent::ChatTurnCompleted => {
-                    if self.busy && let Some(request) = &self.description_rewrite {
-                        let response = self.rewrite_response.take().or_else(|| {
-                            self.streaming_message.map(|index| self.messages[index].text.clone())
-                        }).unwrap_or_default();
+                    if self.busy
+                        && let Some(request) = &self.description_rewrite
+                    {
+                        let response = self
+                            .rewrite_response
+                            .take()
+                            .or_else(|| {
+                                self.streaming_message
+                                    .map(|index| self.messages[index].text.clone())
+                            })
+                            .unwrap_or_default();
                         match request.complete(&response) {
                             Ok(description) => self.rewritten_description = Some(description),
                             Err(error) => self.error = Some(error),
                         }
                     }
-                    if self.busy && let Some(request) = &self.website_request {
+                    if self.busy
+                        && let Some(request) = &self.website_request
+                    {
                         self.created_website = Some(request.root.clone());
                     }
                     self.finish_turn();

@@ -65,12 +65,16 @@ fn rewrite_retry_requests_saved_inputs_after_restart() {
             |ui| retry |= codex.description_rewrite_ui(ui),
         );
         if phase < 2 {
-            button = output.shapes.iter().find_map(|shape| match &shape.shape {
-                egui::Shape::Text(text) if text.galley.text() == "Retry rewrite" => {
-                    Some(text.pos + text.galley.size() * 0.5)
-                }
-                _ => None,
-            }).expect("Retry must be available without an in-memory request");
+            button = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == "Retry rewrite" => {
+                        Some(text.pos + text.galley.size() * 0.5)
+                    }
+                    _ => None,
+                })
+                .expect("Retry must be available without an in-memory request");
         }
     }
     assert!(retry);

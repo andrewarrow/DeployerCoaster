@@ -11,8 +11,9 @@ use std::{
     thread,
 };
 
+use crate::apple::api::AppleApi;
 use crate::{apple::AppleCredentials, dashboard::StoreApp};
-use api::{AppleApi, Session, Snapshot};
+use api::{Session, Snapshot};
 
 #[derive(Clone)]
 enum StepState {

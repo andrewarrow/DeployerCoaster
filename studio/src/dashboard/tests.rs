@@ -114,7 +114,6 @@ fn names_page_adds_locally_and_fits_supported_sizes() {
         output = click(&mut dashboard, pos2(width - 1.0, height - 1.0), vec![]);
         label_position(&output, "1 name");
         assert!(action.borrow().is_none());
-
     }
 }
 

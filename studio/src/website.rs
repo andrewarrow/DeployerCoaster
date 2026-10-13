@@ -152,7 +152,9 @@ mod tests {
         assert!(request.root.is_dir());
         assert!(!sites.join("New Name").exists());
         assert_eq!(
-            WebsiteRequest::prepare(" NEW NAME ", brief, &studio).unwrap().root,
+            WebsiteRequest::prepare(" NEW NAME ", brief, &studio)
+                .unwrap()
+                .root,
             request.root,
             "different casing and surrounding spaces should resolve to the same slug"
         );

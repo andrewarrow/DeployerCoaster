@@ -60,8 +60,12 @@ impl StudioView {
             });
 
         CentralPanel::default().show(ui, |ui| match self.platform {
-            Platform::Ios => crate::ios_view::ui(ui),
-            Platform::Android => crate::android_view::ui(ui),
+            Platform::Ios => apple_store
+                .app_details_ui(ui, self.selected_app.as_ref().map(|(_, id)| id.as_str())),
+            Platform::Android => {
+                apple_store.clear_app_details_selection();
+                crate::android_view::ui(ui);
+            }
         });
     }
 

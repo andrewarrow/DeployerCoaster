@@ -453,7 +453,10 @@ impl App {
             return AppWindowAction::None;
         }
         if window == AppWindow::Wizard {
-            return match self.wizard.ui(ui, &mut self.codex, &self.codex_default_root) {
+            return match self
+                .wizard
+                .ui(ui, &mut self.codex, &self.codex_default_root)
+            {
                 WizardAction::Finished => AppWindowAction::Close,
                 WizardAction::None => AppWindowAction::None,
             };
@@ -927,7 +930,10 @@ mod tests {
         app.command(Command::Wizard);
         assert_eq!(app.take_app_window_request(), Some(AppWindow::Wizard));
         assert_eq!(serde_json::to_value(&app.wizard).unwrap(), saved);
-        assert_eq!(serde_json::to_value(Wizard::from_path(path)).unwrap(), saved);
+        assert_eq!(
+            serde_json::to_value(Wizard::from_path(path)).unwrap(),
+            saved
+        );
     }
 
     #[test]

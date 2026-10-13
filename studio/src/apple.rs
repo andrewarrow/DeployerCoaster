@@ -1,3 +1,6 @@
+pub(crate) mod api;
+pub(crate) mod details;
+
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -382,9 +385,23 @@ pub struct AppleStore {
     icons: crate::app_icons::AppIcons,
     sales: crate::apple_sales::SalesReports,
     app_copy: crate::apple_copy::AppCopy,
+    details: crate::ios_view::IosView,
 }
 
 impl AppleStore {
+    pub(crate) fn app_details_ui(&mut self, ui: &mut egui::Ui, app_id: Option<&str>) {
+        let app = app_id.and_then(|id| self.apps.iter().find(|app| app.id == id));
+        let selection = app.map(|app| (app.id.as_str(), app.attributes.name.as_str()));
+        self.details.ui(ui, selection, self.credentials.as_ref());
+        if app_id.is_some() && app.is_none() {
+            ui.label("The selected app is no longer available. Select an app from the tree.");
+        }
+    }
+
+    pub(crate) fn clear_app_details_selection(&mut self) {
+        self.details.clear_selection();
+    }
+
     pub(crate) fn app_context_menu(
         &mut self,
         response: &egui::Response,

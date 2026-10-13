@@ -27,7 +27,11 @@ impl DescriptionRewriteRequest {
              The new description MUST be fewer than 4000 Unicode characters, including spaces and line breaks (3999 maximum). Aim for 3000 characters or fewer to leave room. Return only a JSON object with one string field, \"description\", containing the complete new description. Do not include commentary or Markdown fences. Do not use tools or read, create, or edit files; Studio will validate and save your response locally alongside the original.\n\n\
              Original description (JSON-quoted): {quoted_original}"
         );
-        Ok(Self { name: name.into(), original: original.into(), prompt })
+        Ok(Self {
+            name: name.into(),
+            original: original.into(),
+            prompt,
+        })
     }
 
     pub(crate) fn complete(&self, response: &str) -> Result<RewrittenDescription, String> {
@@ -47,7 +51,11 @@ impl DescriptionRewriteRequest {
         })?;
         let description = result.description.trim().to_owned();
         validate_rewritten_description(&self.name, &description)?;
-        Ok(RewrittenDescription { name: self.name.clone(), original: self.original.clone(), description })
+        Ok(RewrittenDescription {
+            name: self.name.clone(),
+            original: self.original.clone(),
+            description,
+        })
     }
 }
 
@@ -57,7 +65,9 @@ pub(crate) fn validate_rewritten_description(name: &str, description: &str) -> R
     }
     let count = description.chars().count();
     if count >= 4000 {
-        return Err(format!("The rewritten description is {count} characters. Ask Codex to shorten it to fewer than 4000 characters; the saved copy was kept."));
+        return Err(format!(
+            "The rewritten description is {count} characters. Ask Codex to shorten it to fewer than 4000 characters; the saved copy was kept."
+        ));
     }
     if !description.contains(name) {
         return Err("The rewritten description does not include the app name. Ask Codex to use the selected name; the saved copy was kept.".into());
@@ -74,7 +84,11 @@ mod tests {
         let original = "Other app's description — café\n".repeat(500);
         let request = DescriptionRewriteRequest::new("New App", &original).unwrap();
         assert!(request.prompt.contains("named \"New App\""));
-        assert!(request.prompt.contains(&serde_json::to_string(&original).unwrap()));
+        assert!(
+            request
+                .prompt
+                .contains(&serde_json::to_string(&original).unwrap())
+        );
         assert!(request.prompt.contains("3999 maximum"));
         assert!(request.prompt.contains("Do not use tools"));
         assert!(DescriptionRewriteRequest::new("New App", " ").is_err());
@@ -89,8 +103,18 @@ mod tests {
         assert_eq!(result.description.chars().count(), 3999);
         assert_eq!(result.original, "Original");
         let too_long = serde_json::json!({"description": format!("{text}🌿")}).to_string();
-        assert!(request.complete(&too_long).unwrap_err().contains("4000 characters"));
-        for response in ["", "Working on it", r#"{"description":" "}"#, r#"{"description":"Old App is great"}"#] {
+        assert!(
+            request
+                .complete(&too_long)
+                .unwrap_err()
+                .contains("4000 characters")
+        );
+        for response in [
+            "",
+            "Working on it",
+            r#"{"description":" "}"#,
+            r#"{"description":"Old App is great"}"#,
+        ] {
             assert!(request.complete(response).is_err());
         }
         let wrapped = format!("```json\n{response}\n```");

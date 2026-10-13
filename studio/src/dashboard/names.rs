@@ -211,7 +211,8 @@ impl Names {
                     let slug = name.to_lowercase().replace(' ', "-");
                     let url = format!("https://andrewarrow.dev/{slug}/");
                     let privacy_url = format!("{url}privacy/");
-                    ui.add(egui::Label::new(name).truncate()).on_hover_text(name);
+                    ui.add(egui::Label::new(name).truncate())
+                        .on_hover_text(name);
                     for (label, url) in [("website", &url), ("privacy", &privacy_url)] {
                         ui.push_id((name, label), |ui| {
                             ui.horizontal(|ui| {
@@ -237,7 +238,6 @@ impl Names {
                     ui.add_space(4.0);
                 }
             });
-
     }
 }
 
@@ -279,7 +279,10 @@ mod tests {
     fn adding_names_preserves_previously_saved_descriptions() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("names.json");
-        let original = format!("Product brief — café 🪴\n{}", "Long pasted detail. ".repeat(500));
+        let original = format!(
+            "Product brief — café 🪴\n{}",
+            "Long pasted detail. ".repeat(500)
+        );
         let saved = serde_json::json!([{
             "name": "Example",
             "description": original,
@@ -290,9 +293,16 @@ mod tests {
         names.draft = Some("Another name".into());
         names.add().unwrap();
         let reopened = Names::from_path(path.clone());
-        let entry = reopened.entries.iter().find(|entry| entry.name == "Example").unwrap();
+        let entry = reopened
+            .entries
+            .iter()
+            .find(|entry| entry.name == "Example")
+            .unwrap();
         assert_eq!(entry.description, original);
-        assert_eq!(entry.rewritten_description, "A clear rewritten brief for Example.");
+        assert_eq!(
+            entry.rewritten_description,
+            "A clear rewritten brief for Example."
+        );
 
         fs::write(&path, br#"["Legacy"]"#).unwrap();
         let mut legacy = Names::from_path(path.clone());

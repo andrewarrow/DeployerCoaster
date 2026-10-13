@@ -68,8 +68,7 @@ impl Wizard {
 
     pub(crate) fn from_path(path: PathBuf) -> Self {
         let result = match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice::<Self>(&bytes)
-                .map_err(|error| error.to_string()),
+            Ok(bytes) => serde_json::from_slice::<Self>(&bytes).map_err(|error| error.to_string()),
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(error.to_string()),
         };
@@ -77,17 +76,26 @@ impl Wizard {
             Ok(mut wizard) => {
                 wizard.path = Some(path);
                 wizard.step = wizard.step.clamp(1, STEP_COUNT);
-                if wizard.rewritten_description.as_ref().is_some_and(|rewritten| {
-                    rewritten.name != wizard.app_name.trim()
-                        || rewritten.original != wizard.original_description
-                        || validate_rewritten_description(&rewritten.name, &rewritten.description)
+                if wizard
+                    .rewritten_description
+                    .as_ref()
+                    .is_some_and(|rewritten| {
+                        rewritten.name != wizard.app_name.trim()
+                            || rewritten.original != wizard.original_description
+                            || validate_rewritten_description(
+                                &rewritten.name,
+                                &rewritten.description,
+                            )
                             .is_err()
-                }) {
+                    })
+                {
                     wizard.rewritten_description = None;
                     wizard.website_started = false;
                     wizard.website_created = None;
                 }
-                if wizard.app_name.trim().is_empty() || wizard.original_description.trim().is_empty() {
+                if wizard.app_name.trim().is_empty()
+                    || wizard.original_description.trim().is_empty()
+                {
                     wizard.step = 1;
                     wizard.rewritten_description = None;
                     wizard.website_started = false;
@@ -98,9 +106,11 @@ impl Wizard {
                     wizard.website_created = None;
                 }
                 let slug = wizard.app_name.trim().to_lowercase().replace(' ', "-");
-                if !wizard.website_started || wizard.website_created.as_ref().is_some_and(|root| {
-                    root.file_name().is_none_or(|name| name != slug.as_str())
-                }) {
+                if !wizard.website_started
+                    || wizard.website_created.as_ref().is_some_and(|root| {
+                        root.file_name().is_none_or(|name| name != slug.as_str())
+                    })
+                {
                     wizard.website_created = None;
                 }
                 if wizard.step > 4 && wizard.website_created.is_none() {
@@ -119,7 +129,10 @@ impl Wizard {
     }
 
     fn persist(&self) -> Result<(), String> {
-        let path = self.path.as_deref().ok_or("Local storage is unavailable.")?;
+        let path = self
+            .path
+            .as_deref()
+            .ok_or("Local storage is unavailable.")?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
@@ -130,7 +143,10 @@ impl Wizard {
     fn save_progress(&mut self) -> bool {
         if let Err(error) = self.persist() {
             log::warn!("Could not save wizard progress: {error}");
-            self.error = Some("Could not save wizard progress locally. Check storage permissions and try again.".into());
+            self.error = Some(
+                "Could not save wizard progress locally. Check storage permissions and try again."
+                    .into(),
+            );
             return false;
         }
         true
@@ -155,10 +171,8 @@ impl Wizard {
 
     fn start_rewrite(&mut self, codex: &mut Codex, root: &Path) -> Result<(), String> {
         codex.can_rewrite_description()?;
-        let request = DescriptionRewriteRequest::new(
-            self.app_name.trim(),
-            &self.original_description,
-        )?;
+        let request =
+            DescriptionRewriteRequest::new(self.app_name.trim(), &self.original_description)?;
         codex.rewrite_description(request, root);
         self.rewritten_description = None;
         self.website_started = false;
@@ -206,11 +220,13 @@ impl Wizard {
                         match self.step {
                             1 => {
                                 let label = ui.label("App name");
-                                let name = ui.add(
-                                    egui::TextEdit::singleline(&mut self.app_name)
-                                        .desired_width(f32::INFINITY)
-                                        .hint_text("Enter an app name"),
-                                ).labelled_by(label.id);
+                                let name = ui
+                                    .add(
+                                        egui::TextEdit::singleline(&mut self.app_name)
+                                            .desired_width(f32::INFINITY)
+                                            .hint_text("Enter an app name"),
+                                    )
+                                    .labelled_by(label.id);
                                 let label = ui.label("Original description");
                                 let description = egui::ScrollArea::vertical()
                                     .id_salt("wizard_description_editor")
@@ -218,12 +234,16 @@ impl Wizard {
                                     .auto_shrink([false, true])
                                     .show(ui, |ui| {
                                         ui.add(
-                                            egui::TextEdit::multiline(&mut self.original_description)
-                                                .desired_width(f32::INFINITY)
-                                                .desired_rows(5)
-                                                .hint_text("Paste the original app description"),
-                                        ).labelled_by(label.id)
-                                    }).inner;
+                                            egui::TextEdit::multiline(
+                                                &mut self.original_description,
+                                            )
+                                            .desired_width(f32::INFINITY)
+                                            .desired_rows(5)
+                                            .hint_text("Paste the original app description"),
+                                        )
+                                        .labelled_by(label.id)
+                                    })
+                                    .inner;
                                 if name.changed() || description.changed() {
                                     self.rewritten_description = None;
                                     self.website_started = false;
@@ -245,14 +265,27 @@ impl Wizard {
                             }
                             3 => {
                                 ui.heading(&self.app_name);
-                                let preview_height = ((content_height - 112.0) / 2.0)
-                                    .clamp(64.0, 160.0);
+                                let preview_height =
+                                    ((content_height - 112.0) / 2.0).clamp(64.0, 160.0);
                                 ui.label("Original description");
-                                description_preview(ui, "wizard_original", &self.original_description, preview_height);
+                                description_preview(
+                                    ui,
+                                    "wizard_original",
+                                    &self.original_description,
+                                    preview_height,
+                                );
                                 if let Some(rewritten) = &self.rewritten_description {
                                     ui.label("Rewritten description");
-                                    ui.weak(format!("{} / 3999 characters", rewritten.description.chars().count()));
-                                    description_preview(ui, "wizard_rewritten", &rewritten.description, preview_height);
+                                    ui.weak(format!(
+                                        "{} / 3999 characters",
+                                        rewritten.description.chars().count()
+                                    ));
+                                    description_preview(
+                                        ui,
+                                        "wizard_rewritten",
+                                        &rewritten.description,
+                                        preview_height,
+                                    );
                                 }
                             }
                             4 => {
@@ -269,9 +302,12 @@ impl Wizard {
                             _ => {}
                         }
                         if let Some(error) = &self.error {
-                            ui.add(egui::Label::new(
-                                egui::RichText::new(error).color(ui.visuals().error_fg_color),
-                            ).wrap());
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(error).color(ui.visuals().error_fg_color),
+                                )
+                                .wrap(),
+                            );
                         }
                     });
                 ui.add_space(8.0);
@@ -285,23 +321,32 @@ impl Wizard {
                             "Next"
                         };
                         let enabled = match self.step {
-                            1 => !self.app_name.trim().is_empty() && !self.original_description.trim().is_empty(),
+                            1 => {
+                                !self.app_name.trim().is_empty()
+                                    && !self.original_description.trim().is_empty()
+                            }
                             2 | 3 => self.rewritten_description.is_some(),
-                            4 => if self.website_started {
-                                self.website_created.is_some()
-                            } else {
-                                self.rewritten_description.is_some()
-                            },
+                            4 => {
+                                if self.website_started {
+                                    self.website_created.is_some()
+                                } else {
+                                    self.rewritten_description.is_some()
+                                }
+                            }
                             _ => true,
                         };
-                        if ui.add_enabled(enabled, egui::Button::new(label).min_size(egui::vec2(80.0, 44.0))).clicked() {
+                        if ui
+                            .add_enabled(
+                                enabled,
+                                egui::Button::new(label).min_size(egui::vec2(80.0, 44.0)),
+                            )
+                            .clicked()
+                        {
                             match self.step {
-                                1 => {
-                                    match self.start_rewrite(codex, root) {
-                                        Ok(()) => changed = true,
-                                        Err(error) => self.error = Some(error),
-                                    }
-                                }
+                                1 => match self.start_rewrite(codex, root) {
+                                    Ok(()) => changed = true,
+                                    Err(error) => self.error = Some(error),
+                                },
                                 4 if !self.website_started => {
                                     match self.create_website(codex, root) {
                                         Ok(()) => {
@@ -311,7 +356,10 @@ impl Wizard {
                                     }
                                 }
                                 STEP_COUNT => {
-                                    let mut finished = Self { path: self.path.clone(), ..Default::default() };
+                                    let mut finished = Self {
+                                        path: self.path.clone(),
+                                        ..Default::default()
+                                    };
                                     if finished.save_progress() {
                                         *self = finished;
                                         action = WizardAction::Finished;
@@ -325,7 +373,11 @@ impl Wizard {
                                 }
                             }
                         }
-                        if self.step > 1 && ui.add(egui::Button::new("Back").min_size(egui::vec2(80.0, 44.0))).clicked() {
+                        if self.step > 1
+                            && ui
+                                .add(egui::Button::new("Back").min_size(egui::vec2(80.0, 44.0)))
+                                .clicked()
+                        {
                             if self.step == 2 || self.step == 4 {
                                 codex.abandon_wizard_generation();
                             }
