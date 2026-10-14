@@ -80,6 +80,8 @@ impl DesktopWindow {
                     .with_inner_size(if kind.is_some() {
                         if kind == Some(app::AppWindow::Settings) {
                             LogicalSize::new(820.0, 620.0)
+                        } else if kind == Some(app::AppWindow::Sales) {
+                            LogicalSize::new(900.0, 680.0)
                         } else if kind == Some(app::AppWindow::Wizard) {
                             LogicalSize::new(560.0, 400.0)
                         } else {

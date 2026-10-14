@@ -14,6 +14,7 @@ pub enum Command {
     Wizard,
     Android,
     Apple,
+    Sales,
     About,
     ToggleSidebar,
     ToggleInspector,

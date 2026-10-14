@@ -48,6 +48,7 @@ pub enum AppWindow {
     Wizard,
     Android,
     Apple,
+    Sales,
 }
 
 impl AppWindow {
@@ -57,6 +58,7 @@ impl AppWindow {
             Self::Wizard => "Wizard",
             Self::Android => "Android",
             Self::Apple => "Apple",
+            Self::Sales => "Sales",
         }
     }
 }
@@ -140,6 +142,10 @@ impl App {
         if self.pending_action.is_none() {
             self.keyboard_shortcuts(&ctx);
         }
+        #[cfg(not(target_os = "macos"))]
+        if let Some(command) = self.desktop_menu(ui) {
+            self.command(command);
+        }
         self.apple_store.set_credentials(self.apple.credentials());
         self.studio_view
             .ui(ui, &mut self.apple_store, &mut self.play_store);
@@ -166,90 +172,9 @@ impl App {
 
         let mut selected_command = None;
         #[cfg(not(target_os = "macos"))]
-        egui::Panel::top("app_menu").show(ui, |ui| {
-            egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("Wizard").clicked() {
-                        selected_command = Some(Command::Wizard);
-                        ui.close();
-                    }
-                    ui.separator();
-                    for (label, command) in
-                        [("Android", Command::Android), ("Apple", Command::Apple)]
-                    {
-                        if ui.button(label).clicked() {
-                            selected_command = Some(command);
-                            ui.close();
-                        }
-                    }
-                    ui.separator();
-                    if ui.button("Open…").clicked() {
-                        selected_command = Some(Command::OpenWorkspace);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui
-                        .add_enabled(self.workspace.is_some(), egui::Button::new("Save"))
-                        .clicked()
-                    {
-                        selected_command = Some(Command::Save);
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(self.workspace.is_some(), egui::Button::new("Save As…"))
-                        .clicked()
-                    {
-                        selected_command = Some(Command::SaveAs);
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.workspace.is_some(),
-                            egui::Button::new("Close Workspace"),
-                        )
-                        .clicked()
-                    {
-                        selected_command = Some(Command::CloseWorkspace);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Quit").clicked() {
-                        selected_command = Some(Command::Quit);
-                        ui.close();
-                    }
-                });
-                ui.menu_button("View", |ui| {
-                    if ui
-                        .selectable_label(self.preferences.show_sidebar, "Recent workspaces")
-                        .clicked()
-                    {
-                        selected_command = Some(Command::ToggleSidebar);
-                    }
-                    if ui
-                        .selectable_label(self.preferences.show_inspector, "Workspace details")
-                        .clicked()
-                    {
-                        selected_command = Some(Command::ToggleInspector);
-                    }
-                    if ui
-                        .selectable_label(self.preferences.show_activity, "Activity")
-                        .clicked()
-                    {
-                        selected_command = Some(Command::ToggleActivity);
-                    }
-                });
-                ui.menu_button("Help", |ui| {
-                    if ui.button("Settings…").clicked() {
-                        selected_command = Some(Command::Settings);
-                        ui.close();
-                    }
-                    if ui.button("About DeployerCoaster").clicked() {
-                        selected_command = Some(Command::About);
-                        ui.close();
-                    }
-                });
-            });
-        });
+        {
+            selected_command = self.desktop_menu(ui);
+        }
 
         egui::Panel::top("chatgpt_connection")
             .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(16, 8)))
@@ -404,6 +329,7 @@ impl App {
             Command::Wizard => self.requested_app_windows.push(AppWindow::Wizard),
             Command::Android => self.requested_app_windows.push(AppWindow::Android),
             Command::Apple => self.requested_app_windows.push(AppWindow::Apple),
+            Command::Sales => self.requested_app_windows.push(AppWindow::Sales),
             Command::About => {
                 #[cfg(target_os = "macos")]
                 crate::macos::show_about_panel();
@@ -472,6 +398,16 @@ impl App {
                         .set_reporting_vendor(self.apple.saved_vendor_number());
                     settings = self.apple_store.apps_ui(ui);
                 }
+                AppWindow::Sales => {
+                    self.apple_store.set_credentials(self.apple.credentials());
+                    self.apple_store
+                        .set_reporting_vendor(self.apple.saved_vendor_number());
+                    self.apple_store.prepare_dashboard(ui.ctx());
+                    egui::ScrollArea::vertical()
+                        .id_salt("sales_reports")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| settings = self.apple_store.sales_ui(ui, None));
+                }
                 AppWindow::Wizard => unreachable!(),
                 AppWindow::Settings => unreachable!(),
             });
@@ -484,6 +420,94 @@ impl App {
         } else {
             AppWindowAction::None
         }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn desktop_menu(&mut self, ui: &mut egui::Ui) -> Option<Command> {
+        let mut selected_command = None;
+        egui::Panel::top("app_menu").show(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    for (label, command) in [
+                        ("Wizard", Command::Wizard),
+                        ("Android", Command::Android),
+                        ("Apple", Command::Apple),
+                        ("Sales", Command::Sales),
+                    ] {
+                        if ui.button(label).clicked() {
+                            selected_command = Some(command);
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("Open…").clicked() {
+                        selected_command = Some(Command::OpenWorkspace);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(self.workspace.is_some(), egui::Button::new("Save"))
+                        .clicked()
+                    {
+                        selected_command = Some(Command::Save);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(self.workspace.is_some(), egui::Button::new("Save As…"))
+                        .clicked()
+                    {
+                        selected_command = Some(Command::SaveAs);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.workspace.is_some(),
+                            egui::Button::new("Close Workspace"),
+                        )
+                        .clicked()
+                    {
+                        selected_command = Some(Command::CloseWorkspace);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Quit").clicked() {
+                        selected_command = Some(Command::Quit);
+                        ui.close();
+                    }
+                });
+                ui.menu_button("View", |ui| {
+                    if ui
+                        .selectable_label(self.preferences.show_sidebar, "Recent workspaces")
+                        .clicked()
+                    {
+                        selected_command = Some(Command::ToggleSidebar);
+                    }
+                    if ui
+                        .selectable_label(self.preferences.show_inspector, "Workspace details")
+                        .clicked()
+                    {
+                        selected_command = Some(Command::ToggleInspector);
+                    }
+                    if ui
+                        .selectable_label(self.preferences.show_activity, "Activity")
+                        .clicked()
+                    {
+                        selected_command = Some(Command::ToggleActivity);
+                    }
+                });
+                ui.menu_button("Help", |ui| {
+                    if ui.button("Settings…").clicked() {
+                        selected_command = Some(Command::Settings);
+                        ui.close();
+                    }
+                    if ui.button("About DeployerCoaster").clicked() {
+                        selected_command = Some(Command::About);
+                        ui.close();
+                    }
+                });
+            });
+        });
+        selected_command
     }
 
     pub fn app_window_closed(&mut self, window: AppWindow) {

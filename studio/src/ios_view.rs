@@ -377,7 +377,7 @@ fn localization_listing(ui: &mut Ui, info: Option<&Value>, version: Option<&Valu
 fn localization_links(ui: &mut Ui, info: Option<&Value>, version: Option<&Value>) {
     section_heading(ui, "Links & privacy", Icon::Shield, Accent::Amber);
     if let Some(info) = info {
-        fields(
+        link_fields(
             ui,
             info,
             &[
@@ -387,12 +387,37 @@ fn localization_links(ui: &mut Ui, info: Option<&Value>, version: Option<&Value>
         );
     }
     if let Some(version) = version {
-        fields(
+        link_fields(
             ui,
             version,
             &[("Support", "supportUrl"), ("Marketing", "marketingUrl")],
         );
     }
+}
+
+fn link_fields(ui: &mut Ui, resource: &Value, fields: &[(&str, &str)]) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        for (label, field) in fields {
+            let value = attr(resource, field);
+            let value = if value.trim().is_empty() {
+                "—"
+            } else {
+                value
+            };
+            ui.add(
+                Label::new(
+                    RichText::new(*label)
+                        .size(12.0)
+                        .strong()
+                        .color(muted_text_color(ui)),
+                )
+                .wrap(),
+            );
+            ui.add(Label::new(value).wrap().selectable(true));
+            ui.add_space(4.0);
+        }
+    });
 }
 
 #[derive(Clone, Copy)]
@@ -450,7 +475,7 @@ fn prose_fields(ui: &mut Ui, resource: &Value, fields: &[(&str, &str)]) {
             RichText::new(*label)
                 .size(12.0)
                 .strong()
-                .color(ui.visuals().weak_text_color()),
+                .color(muted_text_color(ui)),
         );
         ui.add(Label::new(value).wrap().selectable(true));
     }
@@ -471,6 +496,14 @@ fn readable(value: &str) -> String {
         .join(" ")
 }
 
+fn muted_text_color(ui: &Ui) -> egui::Color32 {
+    if ui.visuals().dark_mode {
+        egui::Color32::from_rgb(160, 168, 181)
+    } else {
+        egui::Color32::from_rgb(89, 100, 119)
+    }
+}
+
 fn row(ui: &mut Ui, label: &str, value: &str) {
     let value = if value.trim().is_empty() {
         "—"
@@ -480,21 +513,18 @@ fn row(ui: &mut Ui, label: &str, value: &str) {
     if ui.available_width() < 320.0 {
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
-            ui.add(Label::new(RichText::new(label).color(ui.visuals().weak_text_color())).wrap());
+            ui.add(Label::new(RichText::new(label).color(muted_text_color(ui))).wrap());
             ui.add(Label::new(value).wrap().selectable(true));
         });
     } else {
-        let label_width = 128.0;
+        let label_width = 144.0;
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(
                 egui::vec2(label_width, 0.0),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.set_width(label_width);
-                    ui.add(
-                        Label::new(RichText::new(label).color(ui.visuals().weak_text_color()))
-                            .wrap(),
-                    );
+                    ui.add(Label::new(RichText::new(label).color(muted_text_color(ui))).wrap());
                 },
             );
             ui.add(Label::new(value).wrap().selectable(true));
