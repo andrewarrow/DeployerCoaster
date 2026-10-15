@@ -88,6 +88,14 @@ impl AppleSettings {
 
     /// Polls network work and starts a single automatic migration for a legacy local key.
     pub(crate) fn poll(&mut self, ctx: &egui::Context) {
+        self.poll_with_save(ctx, |settings| settings.save());
+    }
+
+    fn poll_with_save<F>(&mut self, ctx: &egui::Context, save: F)
+    where
+        F: FnOnce(&Self) -> Result<(), String>,
+    {
+        let mut save = Some(save);
         if let Some(job) = &self.job {
             match job.try_recv() {
                 Ok(result) => {
@@ -96,13 +104,14 @@ impl AppleSettings {
                     match result {
                         Ok(credentials) if kind == Some(JobKind::ValidateSaved) => {
                             self.saved_credentials = Some(credentials);
-                            self.feedback =
-                                Some("Connected to App Store Connect (read only).".into());
+                            self.feedback = Some("Saved Parsequerade connection.".into());
                             self.error = false;
                         }
                         Ok(credentials) => {
                             self.pending_save = Some(credentials);
-                            self.persist_pending_connection();
+                            self.persist_pending_connection_with(
+                                save.take().expect("save closure is available"),
+                            );
                         }
                         Err(error) => {
                             self.feedback = Some(error);
@@ -176,11 +185,18 @@ impl AppleSettings {
     }
 
     fn persist_pending_connection(&mut self) {
+        self.persist_pending_connection_with(|settings| settings.save());
+    }
+
+    fn persist_pending_connection_with<F>(&mut self, save: F)
+    where
+        F: FnOnce(&Self) -> Result<(), String>,
+    {
         let Some(credentials) = self.pending_save.clone() else {
             return;
         };
         let previous = self.connection.replace(credentials.clone());
-        let result = self.save();
+        let result = save(self);
         if let Err(error) = result {
             self.connection = previous;
             self.feedback = Some(format!(
@@ -199,7 +215,7 @@ impl AppleSettings {
         self.filename.clear();
         self.editing_connection = false;
         self.changed = false;
-        self.feedback = Some("Connected to App Store Connect (read only).".into());
+        self.feedback = Some("Saved Parsequerade connection.".into());
         self.error = false;
     }
 
@@ -211,15 +227,18 @@ impl AppleSettings {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        self.poll(ui.ctx());
         ui.label(egui::RichText::new("App Store Connect").strong());
         if self.saved_credentials.is_some() {
-            ui.label("Connected to App Store Connect through Parsequerade. Read only: app listings and sales reports.");
+            ui.label("Saved Parsequerade connection · read-only app listings and metadata.");
         } else if self.job_kind == Some(JobKind::ValidateSaved) {
             ui.label("Checking saved Parsequerade connection…");
         } else if self.job_kind.is_some() {
             ui.label("Connecting securely through Parsequerade…");
         } else {
-            ui.label("Connect through Parsequerade to read App Store Connect app listings and sales reports.");
+            ui.label(
+                "Connect through Parsequerade to read App Store Connect app listings and metadata.",
+            );
         }
         ui.hyperlink_to(
             "Get your API key and IDs in App Store Connect",
@@ -241,22 +260,24 @@ impl AppleSettings {
             || self.job_kind == Some(JobKind::ValidateSaved)
         {
             ui.add_space(8.0);
-            ui.label("Issuer ID");
+            let issuer_label = ui.label("Issuer ID");
             self.changed |= ui
                 .add(
                     egui::TextEdit::singleline(&mut self.issuer_id)
                         .desired_width(ui.available_width())
                         .hint_text("Paste Issuer ID"),
                 )
+                .labelled_by(issuer_label.id)
                 .changed();
             ui.add_space(8.0);
-            ui.label("Key ID");
+            let key_label = ui.label("Key ID");
             self.changed |= ui
                 .add(
                     egui::TextEdit::singleline(&mut self.key_id)
                         .desired_width(ui.available_width())
                         .hint_text("Paste Key ID"),
                 )
+                .labelled_by(key_label.id)
                 .changed();
             ui.add_space(8.0);
             ui.label("P8 private key");
@@ -303,7 +324,7 @@ impl AppleSettings {
         }
 
         ui.add_space(8.0);
-        let vendor_label = ui.label("Vendor number (for sales reports)");
+        let vendor_label = ui.label("Vendor number");
         self.changed |= ui
             .add(
                 egui::TextEdit::singleline(&mut self.vendor_number)
@@ -347,7 +368,8 @@ impl AppleSettings {
                     self.feedback = None;
                     self.error = false;
                 }
-            } else if self.pending_save.is_some() {
+            }
+            if self.pending_save.is_some() {
                 if ui
                     .add(
                         egui::Button::new("Retry save connection")
@@ -357,7 +379,7 @@ impl AppleSettings {
                 {
                     self.persist_pending_connection();
                 }
-            } else if complete && self.job.is_none() {
+            } else if complete && vendor_valid && self.job.is_none() {
                 let label = if self.connection.is_some() {
                     "Reconnect via Parsequerade"
                 } else {
@@ -501,5 +523,143 @@ mod tests {
         assert!(settings.has_legacy_credentials());
         assert_eq!(settings.vendor_number, "123");
         assert!(!settings.migration_attempted);
+    }
+
+    #[test]
+    fn successful_connect_job_persists_before_publishing_credentials() {
+        let previous = AppleCredentials::test_credentials("previous");
+        let created = AppleCredentials::test_credentials("created");
+        let (sender, receiver) = mpsc::channel();
+        sender.send(Ok(created.clone())).unwrap();
+        let mut settings = AppleSettings {
+            connection: Some(previous.clone()),
+            saved_credentials: Some(previous),
+            saved_vendor_number: "123".into(),
+            vendor_number: "123".into(),
+            job: Some(receiver),
+            job_kind: Some(JobKind::Connect),
+            saved_validation_attempted: true,
+            ..AppleSettings::default()
+        };
+
+        settings.poll_with_save(&egui::Context::default(), |_| Ok(()));
+
+        assert!(settings.connection == Some(created.clone()));
+        assert!(settings.saved_credentials == Some(created.clone()));
+        assert!(settings.credentials() == Some(created));
+        assert!(settings.pending_save.is_none());
+        assert_eq!(settings.saved_vendor_number, "123");
+    }
+
+    #[test]
+    fn failed_connect_job_keeps_saved_credentials_and_does_not_retry_automatically() {
+        let saved = AppleCredentials::test_credentials("saved");
+        let (sender, receiver) = mpsc::channel();
+        sender.send(Err("connection failed".into())).unwrap();
+        let mut settings = AppleSettings {
+            connection: Some(saved.clone()),
+            saved_credentials: Some(saved.clone()),
+            saved_validation_attempted: true,
+            job: Some(receiver),
+            job_kind: Some(JobKind::Connect),
+            ..AppleSettings::default()
+        };
+        let ctx = egui::Context::default();
+
+        settings.poll_with_save(&ctx, |_| panic!("failed jobs must not persist"));
+        settings.poll_with_save(&ctx, |_| panic!("failed jobs must not persist"));
+
+        assert!(settings.saved_credentials == Some(saved.clone()));
+        assert!(settings.credentials() == Some(saved));
+        assert!(settings.job.is_none());
+        assert!(
+            settings
+                .feedback
+                .as_deref()
+                .unwrap()
+                .contains("connection failed")
+        );
+    }
+
+    #[test]
+    fn persistence_failure_retains_created_credentials_for_save_retry() {
+        let previous = AppleCredentials::test_credentials("previous");
+        let created = AppleCredentials::test_credentials("created");
+        let mut settings = AppleSettings {
+            connection: Some(previous.clone()),
+            saved_credentials: Some(previous.clone()),
+            pending_save: Some(created.clone()),
+            ..AppleSettings::default()
+        };
+
+        settings.persist_pending_connection_with(|_| Err("disk unavailable".into()));
+
+        assert!(settings.connection == Some(previous.clone()));
+        assert!(settings.saved_credentials == Some(previous));
+        assert!(settings.pending_save == Some(created));
+        assert!(
+            settings
+                .feedback
+                .as_deref()
+                .unwrap()
+                .contains("disk unavailable")
+        );
+    }
+
+    #[test]
+    fn settings_render_across_viewports_themes_and_connection_states() {
+        let dimensions = [
+            (390.0, 844.0),
+            (768.0, 1024.0),
+            (1280.0, 800.0),
+            (1440.0, 900.0),
+        ];
+        let themes = [egui::Theme::Light, egui::Theme::Dark];
+        for state in ["connecting", "error", "connected"] {
+            for theme in themes {
+                for (width, height) in dimensions {
+                    let ctx = egui::Context::default();
+                    crate::style::configure(&ctx);
+                    ctx.set_theme(theme);
+                    let mut settings = match state {
+                        "connecting" => AppleSettings {
+                            job_kind: Some(JobKind::Connect),
+                            job: Some(mpsc::channel().1),
+                            ..AppleSettings::default()
+                        },
+                        "error" => AppleSettings {
+                            feedback: Some("Could not connect. Please retry.".into()),
+                            error: true,
+                            ..AppleSettings::default()
+                        },
+                        "connected" => {
+                            let credentials = AppleCredentials::test_credentials("connected");
+                            AppleSettings {
+                                connection: Some(credentials.clone()),
+                                saved_credentials: Some(credentials),
+                                ..AppleSettings::default()
+                            }
+                        }
+                        _ => unreachable!(),
+                    };
+                    let input = egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, height),
+                        )),
+                        ..Default::default()
+                    };
+                    let _ = ctx.run_ui(input, |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
+                            egui::ScrollArea::vertical().show(ui, |ui| settings.ui(ui));
+                            assert!(
+                                ui.min_rect().right() <= width,
+                                "{state} settings overflow at {width}px in {theme:?}"
+                            );
+                        });
+                    });
+                }
+            }
+        }
     }
 }

@@ -229,3 +229,48 @@ fn app_list_consumes_flat_pages_sorts_and_deduplicates() {
     assert_eq!(apps[0].attributes.sku, "sku-a");
     assert_eq!(apps[1].attributes.bundle_id, "com.example.b");
 }
+
+#[test]
+#[ignore = "requires explicitly configured Apple test credentials; creates and revokes a temporary hosted connection"]
+fn live_parsequerade_reads() {
+    let issuer =
+        std::env::var("PARSEQUERADE_TEST_ISSUER_ID").expect("set PARSEQUERADE_TEST_ISSUER_ID");
+    let key_id = std::env::var("PARSEQUERADE_TEST_KEY_ID").expect("set PARSEQUERADE_TEST_KEY_ID");
+    let key_path =
+        std::env::var("PARSEQUERADE_TEST_P8_FILE").expect("set PARSEQUERADE_TEST_P8_FILE");
+    let key = std::fs::read_to_string(key_path).expect("read test private key");
+    let credentials = create_connection(&issuer, &key_id, &key)
+        .unwrap_or_else(|error| panic!("Connection setup: {error}"));
+    let result = (|| {
+        let mut api = ParsequeradeApi::new(credentials.clone())?;
+        let cancelled = AtomicBool::new(false);
+        let apps = crate::apple::list_apps(&mut api, &cancelled)?;
+        let app = apps.first().ok_or("Test account has no apps")?;
+        let details = crate::apple::details::load(api, &app.id, &cancelled)?;
+        if !details.warnings.is_empty() {
+            return Err(format!(
+                "Metadata read failed: {}",
+                details.warnings.join("; ")
+            ));
+        }
+        println!(
+            "Verified hosted connection, {} app listings, and selected app metadata/localizations.",
+            apps.len()
+        );
+        Ok::<_, String>(())
+    })();
+    let cleanup = client()
+        .unwrap()
+        .delete(&credentials.base_url)
+        .bearer_auth(&credentials.api_key)
+        .send();
+    assert_eq!(
+        cleanup
+            .expect("revoke temporary connection")
+            .status()
+            .as_u16(),
+        204,
+        "temporary connection revocation failed"
+    );
+    result.unwrap_or_else(|error| panic!("Live reads: {error}"));
+}
