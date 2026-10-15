@@ -63,7 +63,14 @@ impl StudioView {
         if self.picking {
             apple.prepare_app_list(ui.ctx());
         }
-        CentralPanel::default().show(ui, |ui| {
+        let selected = !self.picking && self.selected_app.is_some();
+        let panel = CentralPanel::default();
+        let panel = if selected {
+            panel.frame(egui::Frame::new().fill(ui.visuals().panel_fill))
+        } else {
+            panel
+        };
+        panel.show(ui, |ui| {
             if !self.picking
                 && let Some(app) = &self.selected_app
             {

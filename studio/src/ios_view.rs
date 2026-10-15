@@ -8,22 +8,24 @@ use std::{
     thread,
 };
 
-use egui::{Label, RichText, Ui};
-use serde_json::Value;
+use egui::{Color32, Frame, Margin, RichText, Ui};
 
 use crate::apple::{
     AppleCredentials,
     api::ParsequeradeApi,
-    details::{self, AppDetails, attr, state},
+    details::{self, AppDetails, attr},
 };
-use crate::dashboard::Icon;
 
+mod chrome;
+mod documents;
+mod editor;
+
+use documents::{Document, Workspace};
+
+#[cfg(test)]
+mod preview;
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-#[path = "../target/ios_visual_preview.rs"]
-mod visual_preview;
 
 struct Job {
     result: Receiver<Result<AppDetails, String>>,
@@ -46,7 +48,13 @@ struct Entry {
 pub(crate) struct IosView {
     selected: Option<String>,
     cache: HashMap<String, Entry>,
+    workspaces: HashMap<String, Workspace>,
     job: Option<Job>,
+}
+
+enum Action {
+    Refresh,
+    Version(String),
 }
 
 impl IosView {
@@ -75,6 +83,10 @@ impl IosView {
             let entry = self.cache.entry(selected.clone()).or_default();
             match result {
                 Ok(details) => {
+                    self.workspaces
+                        .entry(selected.clone())
+                        .or_default()
+                        .reconcile(&details);
                     entry.data = Some(details);
                     entry.error = None;
                 }
@@ -84,7 +96,13 @@ impl IosView {
         self.job = None;
     }
 
-    fn start(&mut self, app_id: &str, credentials: AppleCredentials, ctx: &egui::Context) {
+    fn start(
+        &mut self,
+        app_id: &str,
+        version_id: Option<String>,
+        credentials: AppleCredentials,
+        ctx: &egui::Context,
+    ) {
         if self.job.is_some() {
             return;
         }
@@ -100,8 +118,13 @@ impl IosView {
         let app_id = app_id.to_owned();
         let ctx = ctx.clone();
         thread::spawn(move || {
-            let result = ParsequeradeApi::new(credentials)
-                .and_then(|api| details::load(api, &app_id, &cancelled));
+            let result = ParsequeradeApi::new(credentials).and_then(|api| {
+                if version_id.is_some() {
+                    details::load_for_version(api, &app_id, version_id.as_deref(), &cancelled)
+                } else {
+                    details::load(api, &app_id, &cancelled)
+                }
+            });
             if !cancelled.load(Ordering::Relaxed) {
                 let _ = sender.send(result);
                 ctx.request_repaint();
@@ -122,410 +145,202 @@ impl IosView {
         self.select(app_id);
         self.poll();
         let Some(credentials) = credentials else {
-            ui.label("Connect an Apple account in Settings to load app details.");
+            Frame::new().inner_margin(16).show(ui, |ui| {
+                ui.label("Connect an Apple account in Settings to load app details.");
+            });
             return;
         };
         if !self.cache.contains_key(app_id) && self.job.is_none() {
-            self.start(app_id, credentials.clone(), ui.ctx());
+            self.start(app_id, None, credentials.clone(), ui.ctx());
         }
 
-        egui::ScrollArea::vertical()
-            .id_salt(("ios_app_details", app_id))
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                egui::Frame::new()
-                    .inner_margin(egui::Margin::same(16))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width().min(1040.0));
-                        ui.add_space(8.0);
-                        ui.horizontal_top(|ui| {
-                            let title_width =
-                                (ui.available_width() - 80.0 - ui.spacing().item_spacing.x)
-                                    .max(0.0);
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(title_width, 0.0),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| {
-                                    ui.set_width(title_width);
-                                    ui.add(
-                                        Label::new(
-                                            RichText::new(if name.is_empty() {
-                                                app_id
-                                            } else {
-                                                name
-                                            })
-                                            .heading(),
-                                        )
-                                        .wrap(),
-                                    );
-                                },
-                            );
-                            if ui
-                                .add_enabled(
-                                    self.job.is_none(),
-                                    egui::Button::new("Refresh").min_size(egui::vec2(80.0, 36.0)),
-                                )
-                                .clicked()
-                            {
-                                self.start(app_id, credentials.clone(), ui.ctx());
-                            }
-                        });
-                        if self.job.is_some() {
-                            ui.horizontal(|ui| {
-                                ui.spinner();
-                                ui.label(
-                                    if self
-                                        .cache
-                                        .get(app_id)
-                                        .is_some_and(|entry| entry.data.is_some())
-                                    {
-                                        "Refreshing app details…"
-                                    } else {
-                                        "Loading app details…"
-                                    },
-                                );
-                            });
-                        }
-                        if let Some(entry) = self.cache.get(app_id) {
-                            if let Some(error) = &entry.error {
-                                ui.add(
-                                    Label::new(
-                                        RichText::new(error).color(ui.visuals().error_fg_color),
-                                    )
-                                    .wrap(),
-                                );
-                                if entry.data.is_some() {
-                                    ui.label("Previously loaded details are shown.");
-                                }
-                            }
-                            if let Some(details) = &entry.data {
-                                details_ui(ui, details);
-                            }
-                        }
+        let palette = Palette::new(ui.visuals().dark_mode);
+        let loading = self.job.is_some();
+        let entry = self.cache.get(app_id);
+        let details = entry.and_then(|entry| entry.data.as_ref());
+        let workspace = self.workspaces.entry(app_id.into()).or_default();
+        if let Some(details) = details {
+            workspace.reconcile(details);
+        }
+        let mut action = None;
+        ui.push_id(("app_workspace", app_id), |ui| {
+            configure_workspace(ui, palette);
+            let width = ui.available_width();
+            egui::Panel::top("workspace_toolbar")
+                .exact_size(48.0)
+                .frame(palette.frame(palette.toolbar, Margin::symmetric(10, 6)))
+                .show(ui, |ui| {
+                    action = chrome::toolbar(ui, workspace, details, name, loading, palette);
+                });
+            egui::Panel::bottom("workspace_status")
+                .exact_size(26.0)
+                .frame(palette.frame(palette.toolbar, Margin::symmetric(12, 4)))
+                .show(ui, |ui| {
+                    chrome::status(ui, workspace, details, loading, palette)
+                });
+            if width >= 700.0 {
+                let mut expanded = workspace.navigator;
+                egui::Panel::left("resource_navigator")
+                    .default_size(224.0)
+                    .size_range(188.0..=280.0)
+                    .frame(palette.frame(palette.sidebar, Margin::ZERO))
+                    .show_collapsible(ui, &mut expanded, |ui| {
+                        chrome::navigator(ui, workspace, name, palette)
                     });
-            });
-    }
-}
-
-fn details_ui(ui: &mut Ui, details: &AppDetails) {
-    for warning in &details.warnings {
-        ui.add(Label::new(RichText::new(warning).color(ui.visuals().error_fg_color)).wrap());
-    }
-    ui.add_space(16.0);
-    if ui.available_width() >= 740.0 {
-        let gap = 24.0;
-        let width = (ui.available_width() - gap) / 2.0;
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            ui.allocate_ui_with_layout(
-                egui::vec2(width, 0.0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ui.set_width(width);
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    app_information(ui, details);
-                },
-            );
-            ui.add_space(gap);
-            ui.allocate_ui_with_layout(
-                egui::vec2(width, 0.0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ui.set_width(width);
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    ios_version(ui, details);
-                },
-            );
+                workspace.navigator = expanded;
+            }
+            if width >= 1120.0 {
+                let mut expanded = workspace.inspector;
+                egui::Panel::right("resource_inspector")
+                    .default_size(252.0)
+                    .size_range(224.0..=300.0)
+                    .frame(palette.frame(palette.sidebar, Margin::ZERO))
+                    .show_collapsible(ui, &mut expanded, |ui| {
+                        chrome::inspector(ui, workspace, details, palette)
+                    });
+                workspace.inspector = expanded;
+            }
+            egui::CentralPanel::default()
+                .frame(palette.frame(palette.editor, Margin::ZERO))
+                .show(ui, |ui| {
+                    chrome::tabs(ui, workspace, palette);
+                    chrome::jump_bar(ui, workspace, details, palette);
+                    egui::ScrollArea::vertical()
+                        .id_salt(("document", workspace.active, &workspace.locale))
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            let margin = if ui.available_width() < 500.0 { 16 } else { 28 };
+                            Frame::new()
+                                .inner_margin(Margin::symmetric(margin, 24))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width().min(800.0));
+                                    if let Some(error) =
+                                        entry.and_then(|entry| entry.error.as_deref())
+                                    {
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(error).color(palette.error),
+                                            )
+                                            .wrap(),
+                                        );
+                                        if details.is_some() {
+                                            ui.label(
+                                                RichText::new(
+                                                    "Previously loaded details are shown.",
+                                                )
+                                                .color(palette.muted),
+                                            );
+                                        }
+                                        ui.add_space(12.0);
+                                    }
+                                    if let Some(details) = details {
+                                        for warning in &details.warnings {
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(warning).color(palette.error),
+                                                )
+                                                .wrap(),
+                                            );
+                                        }
+                                        editor::document(
+                                            ui,
+                                            workspace,
+                                            details,
+                                            palette,
+                                            loading,
+                                            &mut action,
+                                        );
+                                    } else if loading {
+                                        ui.horizontal(|ui| {
+                                            ui.spinner();
+                                            ui.label("Loading app details…");
+                                        });
+                                    }
+                                });
+                        });
+                });
         });
-    } else {
-        app_information(ui, details);
-        ui.add_space(20.0);
-        ios_version(ui, details);
-    }
-
-    ui.add_space(24.0);
-    section_heading(ui, "English localizations", Icon::Globe, Accent::Violet);
-    let mut locales: Vec<_> = details
-        .info_localizations
-        .iter()
-        .chain(&details.version_localizations)
-        .map(|resource| attr(resource, "locale"))
-        .collect();
-    locales.sort_by_key(|locale| (*locale != "en-US", *locale));
-    locales.dedup();
-    if locales.is_empty() {
-        if !details
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("localizations:"))
-        {
-            ui.label("No English localization is available.");
-        }
-        return;
-    }
-    for (index, locale) in locales.into_iter().enumerate() {
-        if index > 0 {
-            ui.add_space(8.0);
-        }
-        ui.label(RichText::new(locale).size(15.0).strong());
-        let info = details
-            .info_localizations
-            .iter()
-            .find(|resource| attr(resource, "locale") == locale);
-        let version = details
-            .version_localizations
-            .iter()
-            .find(|resource| attr(resource, "locale") == locale);
-        if ui.available_width() >= 740.0 {
-            let gap = 24.0;
-            let width = ui.available_width() - gap;
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                ui.allocate_ui_with_layout(
-                    egui::vec2(width * 2.0 / 3.0, 0.0),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        let column_width = width * 2.0 / 3.0;
-                        ui.set_width(column_width);
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        localization_listing(ui, info, version);
-                    },
-                );
-                ui.add_space(gap);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(width / 3.0, 0.0),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        let column_width = width / 3.0;
-                        ui.set_width(column_width);
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        localization_links(ui, info, version);
-                    },
-                );
-            });
-        } else {
-            localization_listing(ui, info, version);
-            ui.add_space(16.0);
-            localization_links(ui, info, version);
-        }
-    }
-}
-
-fn app_information(ui: &mut Ui, details: &AppDetails) {
-    section_heading(ui, "App information", Icon::Apps, Accent::Blue);
-    row(ui, "App ID", details.app["id"].as_str().unwrap_or_default());
-    fields(
-        ui,
-        &details.app,
-        &[
-            ("Bundle ID", "bundleId"),
-            ("SKU", "sku"),
-            ("Primary locale", "primaryLocale"),
-        ],
-    );
-    if let Some(info) = &details.info {
-        row(ui, "Status", &readable(state(info)));
-        for (label, field) in [
-            ("Primary category", "primaryCategoryId"),
-            ("Secondary category", "secondaryCategoryId"),
-        ] {
-            let category = info[field].as_str().unwrap_or_default();
-            row(ui, label, &readable(category));
-        }
-    }
-}
-
-fn ios_version(ui: &mut Ui, details: &AppDetails) {
-    section_heading(ui, "iOS version", Icon::Phone, Accent::Green);
-    if let Some(version) = &details.version {
-        row(ui, "Version", attr(version, "versionString"));
-        row(ui, "Status", &readable(state(version)));
-        fields(
-            ui,
-            version,
-            &[("Copyright", "copyright"), ("Created", "createdDate")],
-        );
-    } else if !details
-        .warnings
-        .iter()
-        .any(|warning| warning.starts_with("iOS version:"))
-    {
-        ui.label("No iOS App Store version is available.");
-    }
-}
-
-fn localization_listing(ui: &mut Ui, info: Option<&Value>, version: Option<&Value>) {
-    if let Some(info) = info {
-        fields(ui, info, &[("Name", "name"), ("Subtitle", "subtitle")]);
-    }
-    if let Some(version) = version {
-        prose_fields(
-            ui,
-            version,
-            &[
-                ("Description", "description"),
-                ("Promotional text", "promotionalText"),
-                ("What's new", "whatsNew"),
-                ("Keywords", "keywords"),
-            ],
-        );
-    }
-}
-
-fn localization_links(ui: &mut Ui, info: Option<&Value>, version: Option<&Value>) {
-    section_heading(ui, "Links & privacy", Icon::Shield, Accent::Amber);
-    if let Some(info) = info {
-        link_fields(
-            ui,
-            info,
-            &[
-                ("Privacy policy", "privacyPolicyUrl"),
-                ("Privacy choices", "privacyChoicesUrl"),
-            ],
-        );
-    }
-    if let Some(version) = version {
-        link_fields(
-            ui,
-            version,
-            &[("Support", "supportUrl"), ("Marketing", "marketingUrl")],
-        );
-    }
-}
-
-fn link_fields(ui: &mut Ui, resource: &Value, fields: &[(&str, &str)]) {
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 4.0;
-        for (label, field) in fields {
-            let value = attr(resource, field);
-            let value = if value.trim().is_empty() {
-                "—"
-            } else {
-                value
+        if let Some(action) = action {
+            let version = match action {
+                Action::Version(id) => Some(id),
+                Action::Refresh => details
+                    .and_then(|d| d.version.as_ref())
+                    .map(|v| attr(v, "id").to_owned()),
             };
-            ui.add(
-                Label::new(
-                    RichText::new(*label)
-                        .size(12.0)
-                        .strong()
-                        .color(muted_text_color(ui)),
-                )
-                .wrap(),
-            );
-            ui.add(Label::new(value).wrap().selectable(true));
-            ui.add_space(4.0);
+            self.start(app_id, version, credentials.clone(), ui.ctx());
         }
-    });
+    }
 }
 
 #[derive(Clone, Copy)]
-enum Accent {
-    Blue,
-    Green,
-    Violet,
-    Amber,
+struct Palette {
+    toolbar: Color32,
+    sidebar: Color32,
+    editor: Color32,
+    border: Color32,
+    text: Color32,
+    muted: Color32,
+    accent: Color32,
+    selection: Color32,
+    error: Color32,
 }
 
-fn section_heading(ui: &mut Ui, title: &str, icon: Icon, accent: Accent) {
-    let (color, tint) = if ui.visuals().dark_mode {
-        let color = match accent {
-            Accent::Blue => egui::Color32::from_rgb(111, 178, 255),
-            Accent::Green => egui::Color32::from_rgb(100, 216, 157),
-            Accent::Violet => egui::Color32::from_rgb(188, 157, 255),
-            Accent::Amber => egui::Color32::from_rgb(255, 190, 105),
-        };
-        (color, color.gamma_multiply(0.16))
-    } else {
-        let color = match accent {
-            Accent::Blue => egui::Color32::from_rgb(36, 105, 193),
-            Accent::Green => egui::Color32::from_rgb(28, 126, 77),
-            Accent::Violet => egui::Color32::from_rgb(111, 77, 183),
-            Accent::Amber => egui::Color32::from_rgb(157, 97, 21),
-        };
-        (color, color.gamma_multiply(0.12))
-    };
-    ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::hover());
-        ui.painter().rect_filled(rect, 8.0, tint);
-        icon.paint(ui, rect.min + egui::vec2(7.0, 7.0), 18.0, color);
-        ui.add_space(8.0);
-        ui.add(Label::new(RichText::new(title).size(16.0).strong()).wrap());
-    });
-    ui.add_space(8.0);
-}
-
-fn fields(ui: &mut Ui, resource: &Value, fields: &[(&str, &str)]) {
-    for (label, field) in fields {
-        row(ui, label, attr(resource, field));
-    }
-}
-
-fn prose_fields(ui: &mut Ui, resource: &Value, fields: &[(&str, &str)]) {
-    for (label, field) in fields {
-        let value = attr(resource, field);
-        let value = if value.trim().is_empty() {
-            "—"
+impl Palette {
+    fn new(dark: bool) -> Self {
+        if dark {
+            Self {
+                toolbar: Color32::from_rgb(44, 44, 48),
+                sidebar: Color32::from_rgb(36, 36, 40),
+                editor: Color32::from_rgb(30, 30, 33),
+                border: Color32::from_rgb(61, 61, 65),
+                text: Color32::from_gray(230),
+                muted: Color32::from_gray(169),
+                accent: Color32::from_rgb(91, 166, 255),
+                selection: Color32::from_rgb(37, 100, 183),
+                error: Color32::from_rgb(255, 137, 137),
+            }
         } else {
-            value
-        };
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new(*label)
-                .size(12.0)
-                .strong()
-                .color(muted_text_color(ui)),
-        );
-        ui.add(Label::new(value).wrap().selectable(true));
+            Self {
+                toolbar: Color32::from_rgb(237, 237, 239),
+                sidebar: Color32::from_rgb(246, 246, 248),
+                editor: Color32::WHITE,
+                border: Color32::from_rgb(213, 213, 217),
+                text: Color32::from_rgb(38, 38, 42),
+                muted: Color32::from_rgb(104, 104, 113),
+                accent: Color32::from_rgb(0, 102, 215),
+                selection: Color32::from_rgb(0, 103, 218),
+                error: Color32::from_rgb(180, 42, 45),
+            }
+        }
+    }
+    fn frame(self, fill: Color32, margin: Margin) -> Frame {
+        Frame::new().fill(fill).inner_margin(margin)
     }
 }
 
-fn readable(value: &str) -> String {
-    value
-        .split('_')
-        .map(|word| {
-            let word = word.to_lowercase();
-            let mut chars = word.chars();
-            chars
-                .next()
-                .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
-                .unwrap_or_default()
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn muted_text_color(ui: &Ui) -> egui::Color32 {
-    if ui.visuals().dark_mode {
-        egui::Color32::from_rgb(160, 168, 181)
-    } else {
-        egui::Color32::from_rgb(89, 100, 119)
-    }
-}
-
-fn row(ui: &mut Ui, label: &str, value: &str) {
-    let value = if value.trim().is_empty() {
-        "—"
-    } else {
-        value
-    };
-    if ui.available_width() < 320.0 {
-        ui.scope(|ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
-            ui.add(Label::new(RichText::new(label).color(muted_text_color(ui))).wrap());
-            ui.add(Label::new(value).wrap().selectable(true));
-        });
-    } else {
-        let label_width = 144.0;
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(label_width, 0.0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ui.set_width(label_width);
-                    ui.add(Label::new(RichText::new(label).color(muted_text_color(ui))).wrap());
-                },
-            );
-            ui.add(Label::new(value).wrap().selectable(true));
-        });
+fn configure_workspace(ui: &mut Ui, palette: Palette) {
+    let style = ui.style_mut();
+    style
+        .text_styles
+        .insert(egui::TextStyle::Body, egui::FontId::proportional(13.0));
+    style
+        .text_styles
+        .insert(egui::TextStyle::Button, egui::FontId::proportional(12.0));
+    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+    style.spacing.button_padding = egui::vec2(8.0, 5.0);
+    style.spacing.interact_size.y = 28.0;
+    style.visuals.override_text_color = Some(palette.text);
+    style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, palette.border);
+    style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, palette.border);
+    style.visuals.widgets.inactive.weak_bg_fill = palette.editor;
+    style.visuals.text_edit_bg_color = Some(palette.editor);
+    style.visuals.selection.bg_fill = palette.selection;
+    style.visuals.hyperlink_color = palette.accent;
+    for widget in [
+        &mut style.visuals.widgets.inactive,
+        &mut style.visuals.widgets.hovered,
+        &mut style.visuals.widgets.active,
+    ] {
+        widget.corner_radius = egui::CornerRadius::same(4);
     }
 }

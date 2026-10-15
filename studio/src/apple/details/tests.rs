@@ -51,7 +51,7 @@ fn resource(id: &str, attributes: Value) -> Value {
 }
 
 #[test]
-fn loads_main_fields_and_all_english_strings_from_preferred_ios_version() {
+fn loads_main_fields_and_all_locales_from_preferred_ios_version() {
     let mut fake = Fake::default();
     fake.app();
     fake.response(
@@ -87,14 +87,15 @@ fn loads_main_fields_and_all_english_strings_from_preferred_ios_version() {
         attr(details.version.as_ref().unwrap(), "versionString"),
         "2.0"
     );
-    assert_eq!(details.info_localizations.len(), 2);
+    assert_eq!(details.info_localizations.len(), 3);
     assert_eq!(attr(&details.info_localizations[0], "locale"), "en-US");
     assert_eq!(attr(&details.info_localizations[1], "locale"), "en-GB");
+    assert_eq!(attr(&details.info_localizations[2], "locale"), "fr-FR");
     assert_eq!(
         attr(&details.info_localizations[0], "subtitle"),
         "English subtitle"
     );
-    assert_eq!(details.version_localizations.len(), 1);
+    assert_eq!(details.version_localizations.len(), 2);
     assert_eq!(
         attr(&details.version_localizations[0], "description"),
         "English description"
@@ -103,12 +104,17 @@ fn loads_main_fields_and_all_english_strings_from_preferred_ios_version() {
         attr(&details.version_localizations[0], "whatsNew"),
         "New features"
     );
+    assert_eq!(attr(&details.version_localizations[1], "locale"), "de-DE");
+    assert_eq!(details.versions.len(), 3);
+    assert_eq!(details.versions[0]["id"], "draft-new");
+    assert_eq!(details.versions[1]["id"], "draft-old");
+    assert_eq!(details.versions[2]["id"], "live");
     assert!(details.warnings.is_empty());
     assert!(fake.responses.is_empty());
 }
 
 #[test]
-fn follows_localization_pages_before_filtering_for_english() {
+fn follows_localization_pages_and_keeps_all_locales_in_locale_order() {
     let mut fake = Fake::default();
     let first = "/apps/123/app-infos/info/localizations?limit=200";
     let next = "/apps/123/app-infos/info/localizations?limit=200&cursor=opaque%2B%2F%3D";
@@ -131,9 +137,121 @@ fn follows_localization_pages_before_filtering_for_english() {
         transport: &mut fake,
         cancelled: &cancelled,
     };
-    let result = english(reader.list(first).unwrap());
-    assert_eq!(result.len(), 1);
+    let result = sort_localizations(reader.list(first).unwrap());
+    assert_eq!(result.len(), 2);
     assert_eq!(attr(&result[0], "locale"), "en-AU");
+    assert_eq!(attr(&result[1], "locale"), "fr-FR");
+    assert!(fake.responses.is_empty());
+}
+
+#[test]
+fn explicit_version_selection_uses_the_requested_ios_version() {
+    let mut fake = Fake::default();
+    fake.app();
+    fake.response("/apps/123/app-infos?limit=200", json!([]));
+    fake.response(
+        "/apps/123/versions?platform=IOS&limit=200",
+        json!([
+            resource("preferred", json!({"platform": "IOS", "appVersionState": "PREPARE_FOR_SUBMISSION"})),
+            resource("chosen", json!({"platform": "IOS", "appVersionState": "READY_FOR_SALE", "versionString": "1.0"}))
+        ]),
+    );
+    fake.response(
+        "/apps/123/versions/chosen/localizations?limit=200",
+        json!([
+            resource("loc-fr", json!({"locale": "fr-FR"})),
+            resource("loc-us", json!({"locale": "en-US"}))
+        ]),
+    );
+
+    let details =
+        load_for_version(&mut fake, "123", Some("chosen"), &AtomicBool::new(false)).unwrap();
+
+    assert_eq!(details.version.as_ref().unwrap()["id"], "chosen");
+    assert_eq!(details.versions[0]["id"], "preferred");
+    assert_eq!(details.version_localizations.len(), 2);
+    assert_eq!(attr(&details.version_localizations[0], "locale"), "en-US");
+    assert_eq!(attr(&details.version_localizations[1], "locale"), "fr-FR");
+    assert!(fake.responses.is_empty());
+}
+
+#[test]
+fn explicit_version_selection_rejects_invalid_or_foreign_ids() {
+    let cancelled = AtomicBool::new(false);
+    let mut invalid = Fake::default();
+    assert!(load_for_version(&mut invalid, "123", Some("../versions/other"), &cancelled).is_err());
+    assert!(invalid.requests.is_empty());
+
+    let mut foreign = Fake::default();
+    foreign.app();
+    foreign.response("/apps/123/app-infos?limit=200", json!([]));
+    foreign.response(
+        "/apps/123/versions?platform=IOS&limit=200",
+        json!([resource(
+            "owned-version",
+            json!({"platform": "IOS", "appVersionState": "READY_FOR_SALE"})
+        )]),
+    );
+    let error = load_for_version(&mut foreign, "123", Some("other-version"), &cancelled)
+        .err()
+        .unwrap();
+    assert!(error.contains("unavailable for this app"));
+    assert_eq!(foreign.requests.len(), 3);
+    assert!(foreign.responses.is_empty());
+}
+
+#[test]
+fn explicit_version_selection_errors_when_version_list_is_unavailable() {
+    let mut fake = Fake::default();
+    fake.app();
+    fake.response("/apps/123/app-infos?limit=200", json!([]));
+    fake.responses.push_back((
+        "/apps/123/versions?platform=IOS&limit=200".into(),
+        403,
+        json!({"errors": [{"detail": "raw server message"}]}),
+    ));
+
+    let error = load_for_version(&mut fake, "123", Some("requested"), &AtomicBool::new(false))
+        .err()
+        .unwrap();
+
+    assert!(error.contains("Could not load iOS versions"));
+    assert!(error.contains("Access was denied"));
+    assert!(!error.contains("raw server message"));
+    assert!(fake.responses.is_empty());
+}
+
+#[test]
+fn loads_and_orders_version_summaries_across_pages() {
+    let mut fake = Fake::default();
+    fake.app();
+    fake.response("/apps/123/app-infos?limit=200", json!([]));
+    fake.responses.push_back((
+        "/apps/123/versions?platform=IOS&limit=200".into(),
+        200,
+        json!({
+            "items": [resource("live", json!({"platform": "IOS", "appVersionState": "READY_FOR_SALE"}))],
+            "nextCursor": "page-2"
+        }),
+    ));
+    fake.response(
+        "/apps/123/versions?platform=IOS&limit=200&cursor=page-2",
+        json!([
+            resource("mac", json!({"platform": "MAC_OS", "appVersionState": "PREPARE_FOR_SUBMISSION"})),
+            resource("draft", json!({"platform": "IOS", "appVersionState": "PREPARE_FOR_SUBMISSION", "createdDate": "2026-10-01"}))
+        ]),
+    );
+    fake.response(
+        "/apps/123/versions/draft/localizations?limit=200",
+        json!([]),
+    );
+
+    let details = load(&mut fake, "123", &AtomicBool::new(false)).unwrap();
+
+    assert_eq!(details.version.as_ref().unwrap()["id"], "draft");
+    assert_eq!(details.versions.len(), 2);
+    assert_eq!(details.versions[0]["id"], "draft");
+    assert_eq!(details.versions[1]["id"], "live");
     assert!(fake.responses.is_empty());
 }
 

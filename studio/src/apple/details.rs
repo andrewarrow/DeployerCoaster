@@ -13,6 +13,7 @@ pub(crate) struct AppDetails {
     pub app: Value,
     pub info: Option<Value>,
     pub version: Option<Value>,
+    pub versions: Vec<Value>,
     pub info_localizations: Vec<Value>,
     pub version_localizations: Vec<Value>,
     pub warnings: Vec<String>,
@@ -30,24 +31,24 @@ pub(crate) fn state(resource: &Value) -> &str {
         .unwrap_or_default()
 }
 
-fn preferred(resources: &[Value]) -> Option<&Value> {
+fn preference_key(resource: &Value) -> (u8, std::cmp::Reverse<&str>) {
     // Prefer editable metadata, then the live listing, then other states.
-    resources.iter().min_by_key(|resource| {
-        let priority = match state(resource) {
-            "PREPARE_FOR_SUBMISSION" => 0,
-            "READY_FOR_DISTRIBUTION" | "READY_FOR_SALE" => 1,
-            "REPLACED_WITH_NEW_VERSION" | "REPLACED_WITH_NEW_INFO" => 3,
-            _ => 2,
-        };
-        (priority, std::cmp::Reverse(attr(resource, "createdDate")))
-    })
+    let priority = match state(resource) {
+        "PREPARE_FOR_SUBMISSION" => 0,
+        "READY_FOR_DISTRIBUTION" | "READY_FOR_SALE" => 1,
+        "REPLACED_WITH_NEW_VERSION" | "REPLACED_WITH_NEW_INFO" => 3,
+        _ => 2,
+    };
+    (priority, std::cmp::Reverse(attr(resource, "createdDate")))
 }
 
-fn english(mut resources: Vec<Value>) -> Vec<Value> {
-    resources.retain(|resource| {
-        let locale = attr(resource, "locale");
-        locale == "en" || locale.starts_with("en-")
-    });
+fn preferred(resources: &[Value]) -> Option<&Value> {
+    resources
+        .iter()
+        .min_by_key(|resource| preference_key(resource))
+}
+
+fn sort_localizations(mut resources: Vec<Value>) -> Vec<Value> {
     resources.sort_by(|a, b| {
         let a = attr(a, "locale");
         let b = attr(b, "locale");
@@ -83,7 +84,19 @@ pub(crate) fn load<T: Transport>(
     app_id: &str,
     cancelled: &AtomicBool,
 ) -> Result<AppDetails, String> {
+    load_for_version(transport, app_id, None, cancelled)
+}
+
+pub(crate) fn load_for_version<T: Transport>(
+    transport: T,
+    app_id: &str,
+    version_id: Option<&str>,
+    cancelled: &AtomicBool,
+) -> Result<AppDetails, String> {
     validate_id(app_id)?;
+    if let Some(version_id) = version_id {
+        validate_id(version_id)?;
+    }
     let mut reader = Reader {
         transport,
         cancelled,
@@ -105,7 +118,9 @@ pub(crate) fn load<T: Transport>(
                 match reader.list(&format!(
                     "/apps/{app_id}/app-infos/{info_id}/localizations?limit=200"
                 )) {
-                    Ok(localizations) => details.info_localizations = english(localizations),
+                    Ok(localizations) => {
+                        details.info_localizations = sort_localizations(localizations)
+                    }
                     Err(error) => details.warnings.push(format!("App localizations: {error}")),
                 }
             }
@@ -114,24 +129,44 @@ pub(crate) fn load<T: Transport>(
     }
     match reader.list(&format!("/apps/{app_id}/versions?platform=IOS&limit=200")) {
         Ok(versions) => {
-            let versions: Vec<_> = versions
+            let mut versions: Vec<_> = versions
                 .into_iter()
                 .filter(|version| attr(version, "platform") == "IOS")
                 .collect();
-            details.version = preferred(&versions).cloned();
+            versions.sort_by(|a, b| preference_key(a).cmp(&preference_key(b)));
+            details.versions = versions;
+            details.version = match version_id {
+                Some(requested_id) => details
+                    .versions
+                    .iter()
+                    .find(|version| attr(version, "id") == requested_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!("Requested iOS version {requested_id} is unavailable for this app.")
+                    })
+                    .map(Some)?,
+                None => preferred(&details.versions).cloned(),
+            };
             if let Some(version) = &details.version {
                 let version_id = id(version)?;
                 match reader.list(&format!(
                     "/apps/{app_id}/versions/{version_id}/localizations?limit=200"
                 )) {
-                    Ok(localizations) => details.version_localizations = english(localizations),
+                    Ok(localizations) => {
+                        details.version_localizations = sort_localizations(localizations)
+                    }
                     Err(error) => details
                         .warnings
                         .push(format!("Version localizations: {error}")),
                 }
             }
         }
-        Err(error) => details.warnings.push(format!("iOS version: {error}")),
+        Err(error) => {
+            if version_id.is_some() {
+                return Err(format!("Could not load iOS versions: {error}"));
+            }
+            details.warnings.push(format!("iOS version: {error}"));
+        }
     }
     if cancelled.load(Ordering::Relaxed) {
         return Err("App detail loading cancelled.".into());
