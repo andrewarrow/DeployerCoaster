@@ -65,7 +65,7 @@ fn paste_posts_only_copied_attributes_to_destination_and_validates_response() {
         (200, json!({"advertising":false}), false),
         (
             403,
-            json!({"error":{"code":"write_forbidden", "message":"secret"}}),
+            json!({"error":{"code":"upstream_forbidden", "message":"secret"}}),
             false,
         ),
         (503, json!({"error":{"code":"upstream_unavailable"}}), false),
@@ -86,7 +86,7 @@ fn paste_posts_only_copied_attributes_to_destination_and_validates_response() {
         );
         if status == 403 {
             let message = result.unwrap_err();
-            assert!(message.contains("Replace the connection"));
+            assert!(message.contains("App Store Connect permissions"));
             assert!(!message.contains("secret"));
         }
     }

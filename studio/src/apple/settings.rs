@@ -11,7 +11,8 @@ use std::{
 pub struct AppleSettings {
     #[serde(default)]
     connection: Option<AppleCredentials>,
-    // These fields are read only to migrate the old local format. They are never written again.
+    // Form fields also accept the original local credential format during migration.
+    // Only the validated credentials in `connection` are persisted.
     #[serde(default, skip_serializing)]
     issuer_id: String,
     #[serde(default, skip_serializing)]
@@ -81,8 +82,19 @@ impl AppleSettings {
     fn finish_loading(mut settings: Self) -> Self {
         settings.saved_vendor_number = settings.vendor_number.trim().to_owned();
         settings.saved_credentials = None;
+        if settings
+            .connection
+            .as_ref()
+            .is_some_and(|key| key.private_key.is_empty())
+        {
+            settings.connection = None;
+            settings.feedback = Some(
+                "Add your Issuer ID, Key ID, and .p8 file again to use Apple directly. The saved hosted connection cannot provide the private key.".into(),
+            );
+            settings.error = true;
+        }
         settings.legacy_migration_pending =
-            settings.connection.is_none() && settings.has_legacy_credentials();
+            settings.connection.is_none() && settings.has_key_input();
         settings
     }
 
@@ -94,7 +106,7 @@ impl AppleSettings {
         &self.saved_vendor_number
     }
 
-    /// Polls network work and starts a single automatic migration for a legacy local key.
+    /// Polls key validation and migrates the original local credential format once.
     pub(crate) fn poll(&mut self, ctx: &egui::Context) {
         self.poll_with_save(ctx, |settings| settings.save());
     }
@@ -127,7 +139,7 @@ impl AppleSettings {
                     match result {
                         Ok(credentials) if kind == Some(JobKind::ValidateSaved) => {
                             self.saved_credentials = Some(credentials);
-                            self.feedback = Some("Saved Parsequerade connection.".into());
+                            self.feedback = Some("Apple API key saved.".into());
                             self.error = false;
                         }
                         Ok(credentials) => {
@@ -149,7 +161,7 @@ impl AppleSettings {
                 Err(TryRecvError::Disconnected) => {
                     self.job = None;
                     self.job_kind = None;
-                    self.feedback = Some("The Parsequerade connection stopped. Try again.".into());
+                    self.feedback = Some("Apple key validation stopped. Try again.".into());
                     self.error = true;
                 }
             }
@@ -176,7 +188,7 @@ impl AppleSettings {
         }
     }
 
-    fn has_legacy_credentials(&self) -> bool {
+    fn has_key_input(&self) -> bool {
         !self.issuer_id.trim().is_empty()
             && !self.key_id.trim().is_empty()
             && !self.private_key.trim().is_empty()
@@ -201,9 +213,7 @@ impl AppleSettings {
         let key_id = self.key_id.trim().to_owned();
         let private_key = self.private_key.clone();
         self.start_job(ctx, kind, move || {
-            let credentials = crate::apple::api::create_connection(&issuer, &key_id, &private_key)?;
-            crate::apple::api::validate_connection(&credentials)?;
-            Ok(credentials)
+            crate::apple::api::create_connection(&issuer, &key_id, &private_key)
         });
     }
 
@@ -223,7 +233,7 @@ impl AppleSettings {
         if let Err(error) = result {
             self.connection = previous;
             self.feedback = Some(format!(
-                "The connection was created, but could not be saved locally. Retry saving to avoid creating another connection: {error}"
+                "The Apple API key could not be saved locally. Retry saving: {error}"
             ));
             self.error = true;
             return;
@@ -238,7 +248,7 @@ impl AppleSettings {
         self.filename.clear();
         self.editing_connection = false;
         self.changed = false;
-        self.feedback = Some("Saved Parsequerade connection.".into());
+        self.feedback = Some("Apple API key saved.".into());
         self.error = false;
     }
 
@@ -253,26 +263,24 @@ impl AppleSettings {
         self.poll(ui.ctx());
         ui.label(egui::RichText::new("App Store Connect").strong());
         if self.saved_credentials.is_some() {
-            ui.label("Saved Parsequerade connection.");
+            ui.label("Apple API key saved.");
         } else if self.job_kind == Some(JobKind::ValidateSaved) {
-            ui.label("Checking saved connection details…");
+            ui.label("Checking saved Apple API key…");
         } else if self.job_kind.is_some() {
-            ui.label("Connecting securely through Parsequerade…");
+            ui.label("Checking Apple API key…");
         } else {
-            ui.label(
-                "Connect through Parsequerade to read App Store Connect app listings and metadata.",
-            );
+            ui.label("Add your Apple API key to read App Store Connect app listings and metadata.");
         }
         ui.hyperlink_to(
             "Get your API key and IDs in App Store Connect",
             "https://appstoreconnect.apple.com/access/integrations/api",
         );
         ui.add(egui::Label::new(
-            "Your Apple key is sent securely to Parsequerade, which stores the connection to read app metadata and paste age-rating settings.",
+            "Your Apple key is saved on this device. Studio connects directly to Apple to read app metadata and paste age-rating settings.",
         ).wrap());
         if self.saved_credentials.is_some()
             && !self.editing_connection
-            && ui.button("Replace connection…").clicked()
+            && ui.button("Replace API key…").clicked()
         {
             self.editing_connection = true;
         }
@@ -372,7 +380,7 @@ impl AppleSettings {
             );
         }
 
-        let complete = self.has_legacy_credentials();
+        let complete = self.has_key_input();
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             if self.connection.is_some()
@@ -382,7 +390,7 @@ impl AppleSettings {
             {
                 if ui
                     .add(
-                        egui::Button::new("Retry saved connection check")
+                        egui::Button::new("Retry saved key check")
                             .min_size(egui::vec2(190.0, 44.0)),
                     )
                     .clicked()
@@ -394,19 +402,16 @@ impl AppleSettings {
             }
             if self.pending_save.is_some() {
                 if ui
-                    .add(
-                        egui::Button::new("Retry save connection")
-                            .min_size(egui::vec2(170.0, 44.0)),
-                    )
+                    .add(egui::Button::new("Retry saving key").min_size(egui::vec2(170.0, 44.0)))
                     .clicked()
                 {
                     self.persist_pending_connection();
                 }
             } else if complete && vendor_valid && self.job.is_none() {
                 let label = if self.connection.is_some() {
-                    "Reconnect via Parsequerade"
+                    "Replace Apple API key"
                 } else {
-                    "Connect via Parsequerade"
+                    "Save Apple API key"
                 };
                 if ui
                     .add(egui::Button::new(label).min_size(egui::vec2(180.0, 44.0)))
@@ -414,7 +419,7 @@ impl AppleSettings {
                 {
                     self.start_create(ui.ctx(), JobKind::Connect);
                     self.changed = false;
-                    self.feedback = Some("Connecting through Parsequerade…".into());
+                    self.feedback = Some("Checking Apple API key…".into());
                     self.error = false;
                 }
             }
@@ -543,10 +548,84 @@ mod tests {
     fn legacy_settings_load_and_are_marked_for_migration() {
         let json = r#"{"issuer_id":"issuer","key_id":"key","private_key":"pem","filename":"old.p8","vendor_number":"123"}"#;
         let settings = AppleSettings::finish_loading(serde_json::from_str(json).unwrap());
-        assert!(settings.has_legacy_credentials());
+        assert!(settings.has_key_input());
         assert_eq!(settings.vendor_number, "123");
         assert!(settings.legacy_migration_pending);
         assert!(!settings.migration_attempted);
+    }
+
+    fn poll_until_settled(
+        settings: &mut AppleSettings,
+        save: impl Fn(&AppleSettings) -> Result<(), String>,
+    ) {
+        let ctx = egui::Context::default();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            settings.poll_with_save(&ctx, |settings| save(settings));
+            if settings.job.is_none() && !settings.legacy_migration_pending {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "local validation stalled"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn local_key_migrates_persists_and_reloads_without_hosted_setup() {
+        let key = AppleCredentials::test_credentials("issuer");
+        let legacy = serde_json::json!({
+            "issuer_id":key.issuer_id, "key_id":key.key_id,
+            "private_key":key.private_key, "filename":"test.p8", "vendor_number":"123",
+        });
+        let mut settings = AppleSettings::finish_loading(serde_json::from_value(legacy).unwrap());
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("apple-credentials.json");
+        poll_until_settled(&mut settings, |settings| {
+            crate::storage::save_credentials(&path, &serde_json::to_vec(settings).unwrap())
+        });
+        assert!(settings.credentials() == Some(key.clone()));
+        assert!(settings.private_key.is_empty());
+        let bytes = fs::read(&path).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(saved["connection"]["privateKey"], key.private_key);
+        assert!(saved.get("private_key").is_none());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        let mut restored = AppleSettings::finish_loading(serde_json::from_slice(&bytes).unwrap());
+        assert!(restored.credentials().is_none());
+        poll_until_settled(&mut restored, |_| {
+            panic!("saved keys need no migration write")
+        });
+        assert!(restored.credentials() == Some(key));
+        assert_eq!(restored.saved_vendor_number(), "123");
+    }
+
+    #[test]
+    fn hosted_credentials_request_a_local_key_and_preserve_vendor_number() {
+        let hosted = serde_json::json!({
+            "connection":{
+                "connectionId":"conn_old", "baseUrl":"https://parsequerade.mainbrella.com/v1/connections/conn_old",
+                "apiKey":"pq_old", "accountId":"old-account",
+            },
+            "vendor_number":"123",
+        });
+        let mut settings = AppleSettings::finish_loading(serde_json::from_value(hosted).unwrap());
+        poll_until_settled(&mut settings, |_| panic!("hosted keys cannot be migrated"));
+        assert!(settings.credentials().is_none());
+        assert!(settings.connection.is_none());
+        assert_eq!(settings.saved_vendor_number(), "123");
+        assert!(settings.error);
+        assert!(settings.feedback.as_deref().unwrap().contains(".p8"));
+        assert!(!serde_json::to_string(&settings).unwrap().contains("pq_old"));
     }
 
     #[test]

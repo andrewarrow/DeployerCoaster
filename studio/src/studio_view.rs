@@ -162,7 +162,7 @@ impl StudioView {
         });
         let status = apple.dashboard_status();
         if !status.connected {
-            ui.label("Connect your Apple account through Parsequerade to load iOS apps.");
+            ui.label("Add your Apple API key in Apple settings to load iOS apps.");
             return ui
                 .add_sized([160.0, 44.0], Button::new("Apple settings…"))
                 .clicked()

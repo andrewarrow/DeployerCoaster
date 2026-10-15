@@ -103,13 +103,13 @@ fn account_paths_are_isolated_and_do_not_contain_credentials() {
         recents_path(&account_key(&b))
     );
     let mut rotated = a.clone();
-    rotated.connection_id = "rotated".into();
-    rotated.api_key = "pq_rotated".into();
+    rotated.key_id = "ROTATED123".into();
+    rotated.private_key = "rotated private key".into();
     assert_eq!(cache_path(&a), cache_path(&rotated));
     assert!(
         !cache_path(&a)
             .unwrap()
             .to_string_lossy()
-            .contains("pq_test-key")
+            .contains(&a.private_key)
     );
 }

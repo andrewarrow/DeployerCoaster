@@ -815,6 +815,7 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
+ "parsequerade",
  "pollster",
  "reqwest",
  "rfd",
@@ -824,6 +825,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "time",
+ "tokio",
  "webbrowser",
  "winit",
 ]
@@ -1591,6 +1593,12 @@ name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
+
+[[package]]
+name = "httpdate"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "hyper"
@@ -2660,6 +2668,20 @@ dependencies = [
  "redox_syscall 0.5.18",
  "smallvec",
  "windows-link",
+]
+
+[[package]]
+name = "parsequerade"
+version = "0.1.0"
+source = "git+https://github.com/mainbrella/parsequerade?rev=1442465e2d8180f3729ea8448f70fa3e15d63e4d#1442465e2d8180f3729ea8448f70fa3e15d63e4d"
+dependencies = [
+ "base64 0.22.1",
+ "httpdate",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

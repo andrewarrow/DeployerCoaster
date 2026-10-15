@@ -16,20 +16,30 @@ desktop installed based software for developers to help with app store connect, 
 Run the desktop studio with `cargo run --manifest-path studio/Cargo.toml`.
 
 Studio starts with **Open App**, **Create New**, and **Recent Apps**. Open App
-lists the iOS apps available through your saved Parsequerade connection; connect
-in **Settings → Apple** if needed. The list is cached on disk for 24 hours.
+lists the iOS apps available to your saved Apple API key; add it in
+**Settings → Apple** if needed. The list is cached on disk for 24 hours.
 Selecting an app opens its information without a navigation tree and remembers
 it locally for next time. The cache and the ten most recent apps are scoped to
 the Apple account. **File → Close App** returns to the startup screen;
 **File → Open App** lets you choose another app. Create New is a no-op for now.
 
-Open **Analytics** for daily and monthly App Store sales reports, or an app's
-**Analytics** tab for its reports. In **Settings → Apple**, save your App Store
-Connect Team Key credentials and vendor number (found in Payments and Financial
-Reports). The key needs permission to download sales reports. Reports show units,
+Studio uses the [Parsequerade Rust SDK](https://github.com/mainbrella/parsequerade/tree/1442465e2d8180f3729ea8448f70fa3e15d63e4d/sdks/rust)
+to call App Store Connect directly for app listings, metadata, localizations, and
+age-rating updates. Cargo pins the SDK to that commit. Your Issuer ID, Key ID, and
+`.p8` contents are saved locally in `DeployerCoaster/apple-credentials.json` in the
+OS configuration directory, with owner-only permissions on Unix. Existing hosted
+connections require entering those values again; original local credentials migrate
+automatically. The [Parsequerade reference](https://parsequerade.mainbrella.com/docs/)
+describes the facade resources. Live sales reports and full-app copying remain
+unavailable in the SDK.
+
+Open **Analytics** for previously cached daily and monthly App Store sales reports,
+or an app's **Analytics** tab for its reports. In **Settings → Apple**, save your
+App Store Connect Team Key credentials and vendor number (found in Payments and
+Financial Reports). Reports show units,
 developer proceeds by currency, and expandable device/version, download, update,
 redownload, and country breakdowns. Reports are cached locally by account, vendor,
-and period; **Refresh** downloads revisions. Monthly reports default to the previous
+and period. Live downloads are unavailable. Monthly reports default to the previous
 month, and daily reports to yesterday.
 
 Open **File → Android** and choose **Connect Play Store**. It opens Google sign-in in

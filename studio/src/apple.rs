@@ -19,29 +19,28 @@ use std::{
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppleCredentials {
-    connection_id: String,
-    base_url: String,
-    api_key: String,
+    // Defaults let settings recognize old hosted credentials and request a local key.
     #[serde(default)]
-    account_id: String,
+    issuer_id: String,
+    #[serde(default)]
+    key_id: String,
+    #[serde(default)]
+    private_key: String,
 }
 
 impl AppleCredentials {
     pub(crate) fn sales_cache_account(&self) -> String {
-        if !self.account_id.is_empty() {
-            return self.account_id.clone();
-        }
         use sha2::{Digest, Sha256};
-        format!("{:x}", Sha256::digest(self.connection_id.as_bytes()))
+        format!("{:x}", Sha256::digest(self.issuer_id.as_bytes()))
     }
 
     #[cfg(test)]
     pub(crate) fn test_credentials(account: &str) -> Self {
         Self {
-            connection_id: account.into(),
-            base_url: format!("https://parsequerade.mainbrella.com/v1/connections/{account}"),
-            api_key: "pq_test-key".into(),
-            account_id: account.into(),
+            issuer_id: account.into(),
+            key_id: "TESTKEY123".into(),
+            // Generated test key; never used with a real Apple account.
+            private_key: "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsXeu4MtpIGSBnMR6\nZKrSX4c7APzEYmuQNkNvZmw420+hRANCAAQbThc1yloRUoxy4+t0NqLedEFQFkLm\nEt6dnzL5XpibvvEfBBn91ZC5WYGqfFUf6hVuYLHaw1Yod2iJQ3rAYon/\n-----END PRIVATE KEY-----".into(),
         }
     }
 }
@@ -277,10 +276,7 @@ impl AppleStore {
         ui.add_space(8.0);
         if self.credentials.is_none() {
             ui.add(
-                egui::Label::new(
-                    "Connect your Apple key through Parsequerade in Apple settings to load apps.",
-                )
-                .wrap(),
+                egui::Label::new("Add your Apple API key in Apple settings to load apps.").wrap(),
             );
             return ui
                 .add(egui::Button::new("Apple settings…").min_size(egui::vec2(140.0, 44.0)))
@@ -347,7 +343,7 @@ impl AppleStore {
         }
         ui.add_space(8.0);
         if self.loaded && self.job.is_none() && self.error.is_none() && self.apps.is_empty() {
-            ui.label("No apps are accessible to this Parsequerade connection.");
+            ui.label("No apps are accessible to this Apple API key.");
         } else {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])

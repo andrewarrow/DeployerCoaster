@@ -150,7 +150,7 @@ impl SalesReports {
         );
         if self.credentials.is_none() || self.vendor.is_empty() {
             ui.add(egui::Label::new(if self.credentials.is_none() {
-                "Connect Parsequerade and add your vendor number in Apple settings to view saved sales reports."
+                "Add your Apple API key and vendor number in Apple settings to view saved sales reports."
             } else {
                 "Add your vendor number in Apple settings to view saved sales reports."
             }).wrap());

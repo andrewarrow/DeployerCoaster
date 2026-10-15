@@ -28,12 +28,14 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 log = "0.4"
 oauth2 = { version = "5", default-features = false, features = ["reqwest-blocking", "rustls-tls", "timing-resistant-secret-traits"] }
 pollster = "0.4"
+parsequerade = { git = "https://github.com/mainbrella/parsequerade", rev = "1442465e2d8180f3729ea8448f70fa3e15d63e4d" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha1 = "0.10"
 tempfile = "3"
+tokio = { version = "1", features = ["rt", "net", "time"] }
 winit = "0.30"
 webbrowser = "1"
 
