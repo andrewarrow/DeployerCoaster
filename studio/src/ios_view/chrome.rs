@@ -508,7 +508,10 @@ pub(super) fn jump_bar(
         .frame(palette.frame(palette.editor, Margin::symmetric(10, 2)))
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
-                let localized = matches!(workspace.active, Document::Listing | Document::Privacy);
+                let localized = matches!(
+                    workspace.active,
+                    Document::Listing | Document::Privacy | Document::Media
+                );
                 let available = ui.available_width();
                 let breadcrumb_width = if localized {
                     (available - 188.0).max(40.0)
@@ -611,6 +614,7 @@ fn inspector_contents(
         match workspace.active {
             Document::Information => "App",
             Document::Listing => "Version localization",
+            Document::Media => "Screenshots and app previews",
             Document::Privacy => "App metadata",
             Document::AgeRating => "Age rating declaration",
             Document::Versions => "Version collection",
@@ -632,7 +636,10 @@ fn inspector_contents(
             ui.label(RichText::new("No iOS version available.").color(palette.muted));
         }
         if !workspace.locale.is_empty()
-            && matches!(workspace.active, Document::Listing | Document::Privacy)
+            && matches!(
+                workspace.active,
+                Document::Listing | Document::Privacy | Document::Media
+            )
         {
             inspector_value(ui, "Locale", &workspace.locale, palette);
             let primary = attr(&details.app, "primaryLocale");

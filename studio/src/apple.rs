@@ -1,6 +1,7 @@
 pub(crate) mod api;
 pub(crate) mod catalog;
 pub(crate) mod details;
+pub(crate) mod media;
 mod settings;
 pub use settings::AppleSettings;
 

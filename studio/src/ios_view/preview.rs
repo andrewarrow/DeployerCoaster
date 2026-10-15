@@ -236,6 +236,7 @@ fn render_ios_workspace_previews() {
             (Document::Information, &[390, 768, 1280, 1440][..]),
             (Document::Listing, &[390, 768, 1280, 1440][..]),
             (Document::AgeRating, &[390, 768, 1280, 1440][..]),
+            (Document::Media, &[390, 768, 1280, 1440][..]),
             (Document::Privacy, &[1280][..]),
         ] {
             for &width in widths {
@@ -256,6 +257,7 @@ fn render_ios_workspace_previews() {
                 ctx.style_mut_of(theme, |style| style.animation_time = 0.0);
 
                 let mut view = IosView::default();
+                view.select(APP_ID);
                 let mut details = preview_details();
                 if document == Document::Privacy {
                     details.info_localizations[1]["privacyPolicyUrl"] = serde_json::Value::Null;
@@ -269,6 +271,9 @@ fn render_ios_workspace_previews() {
                     },
                 );
                 let details = view.cache.get(APP_ID).unwrap().data.as_ref().unwrap();
+                if document == Document::Media {
+                    view.media = media::Gallery::preview(details, "en-US");
+                }
                 let workspace = view.workspaces.entry(APP_ID.into()).or_default();
                 workspace.reconcile(details);
                 workspace.open(document);
@@ -323,6 +328,7 @@ fn render_ios_workspace_previews() {
                     Document::Information => "information",
                     Document::Listing => "listing",
                     Document::AgeRating => "age-rating",
+                    Document::Media => "media",
                     Document::Privacy => "missing-data",
                     _ => unreachable!(),
                 };

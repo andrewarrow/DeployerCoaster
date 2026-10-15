@@ -21,6 +21,7 @@ mod chrome;
 mod completeness;
 mod documents;
 mod editor;
+mod media;
 
 use documents::{Document, Workspace};
 
@@ -58,6 +59,7 @@ pub(crate) struct IosView {
     job: Option<Job>,
     review_job: Option<Job<Option<serde_json::Value>>>,
     age_copy: age_copy::AgeCopy,
+    media: media::Gallery,
 }
 
 enum Action {
@@ -77,6 +79,7 @@ impl IosView {
         self.job = None;
         self.review_job = None;
         self.selected = None;
+        self.media.cancel();
     }
 
     fn select(&mut self, app_id: &str) {
@@ -84,6 +87,7 @@ impl IosView {
             self.job = None;
             self.review_job = None;
             self.selected = Some(app_id.to_owned());
+            self.media.clear();
         }
     }
 
@@ -121,6 +125,7 @@ impl IosView {
             let entry = self.cache.entry(selected.clone()).or_default();
             match result {
                 Ok(details) => {
+                    self.media.clear();
                     self.workspaces
                         .entry(selected.clone())
                         .or_default()
@@ -343,14 +348,35 @@ impl IosView {
                                                 .wrap(),
                                             );
                                         }
-                                        editor::document(
-                                            ui,
-                                            workspace,
-                                            details,
-                                            palette,
-                                            loading,
-                                            &mut action,
-                                        );
+                                        if workspace.active == Document::Media {
+                                            if ui.ctx().content_rect().width() < 700.0 {
+                                                chrome::version_picker(
+                                                    ui,
+                                                    Some(details),
+                                                    loading,
+                                                    &mut action,
+                                                );
+                                                ui.add_space(12.0);
+                                            }
+                                            self.media.ui(
+                                                ui,
+                                                details,
+                                                &workspace.locale,
+                                                credentials,
+                                                palette,
+                                                loading,
+                                            );
+                                        } else {
+                                            self.media.cancel();
+                                            editor::document(
+                                                ui,
+                                                workspace,
+                                                details,
+                                                palette,
+                                                loading,
+                                                &mut action,
+                                            );
+                                        }
                                     } else if loading {
                                         ui.horizontal(|ui| {
                                             ui.spinner();
@@ -377,6 +403,7 @@ impl IosView {
                     .and_then(|d| d.version.as_ref())
                     .map(|v| attr(v, "id").to_owned()),
             };
+            self.media.cancel();
             self.start(app_id, version, credentials.clone(), ui.ctx());
         }
     }

@@ -311,6 +311,7 @@ fn render_document(
     });
     let credentials = AppleCredentials::test_credentials("test");
     let mut view = IosView::default();
+    view.select("123");
     view.cache.insert(
         "123".into(),
         Entry {
@@ -319,6 +320,9 @@ fn render_document(
         },
     );
     let details = view.cache["123"].data.as_ref().unwrap();
+    if document == Document::Media {
+        view.media = media::Gallery::preview(details, "en-US");
+    }
     let workspace = view.workspaces.entry("123".into()).or_default();
     workspace.reconcile(details);
     workspace.open(document);
@@ -590,7 +594,7 @@ fn workspace_documents_render_at_supported_sizes_and_themes_without_overflow() {
         (Document::AgeRating, "Rating Overrides"),
         (Document::Review, "Review Contact"),
         (Document::Versions, "iOS Releases"),
-        (Document::Media, "Screenshots & Previews"),
+        (Document::Media, "Screenshots"),
         (Document::Changes, "Local Changes"),
     ];
     for theme in [egui::Theme::Light, egui::Theme::Dark] {
@@ -630,7 +634,8 @@ fn workspace_documents_render_at_supported_sizes_and_themes_without_overflow() {
                     );
                 }
                 if document == Document::Media {
-                    assert!(labels.iter().any(|text| text == "Screenshot sets"));
+                    assert!(labels.iter().any(|text| text == "iPhone 6.7\""));
+                    assert!(!labels.iter().any(|text| text == "Planned"));
                 }
                 if document == Document::AgeRating {
                     assert!(!labels.iter().any(|text| text == "Planned resource"));

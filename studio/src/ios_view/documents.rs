@@ -192,6 +192,7 @@ impl Document {
             self,
             Self::Information
                 | Self::Listing
+                | Self::Media
                 | Self::Versions
                 | Self::Privacy
                 | Self::AgeRating

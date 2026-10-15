@@ -2673,7 +2673,6 @@ dependencies = [
 [[package]]
 name = "parsequerade"
 version = "0.1.0"
-source = "git+https://github.com/mainbrella/parsequerade?rev=1442465e2d8180f3729ea8448f70fa3e15d63e4d#1442465e2d8180f3729ea8448f70fa3e15d63e4d"
 dependencies = [
  "base64 0.22.1",
  "httpdate",
