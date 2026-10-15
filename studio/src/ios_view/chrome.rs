@@ -17,9 +17,12 @@ pub(super) fn toolbar(
     let compact = ui.available_width() < 680.0;
     let inline_inspector = ui.available_width() >= 1100.0;
     ui.horizontal_centered(|ui| {
+        if crate::native_titlebar_active(ui.ctx()) {
+            ui.add_space(80.0);
+        }
         if compact {
             let response = ui
-                .menu_button("☰", |ui| {
+                .menu_button("    ", |ui| {
                     ui.set_width(260.0);
                     navigation_rows(ui, workspace, palette, true);
                 })
@@ -28,10 +31,11 @@ pub(super) fn toolbar(
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Resource navigator")
             });
+            paint_pane_icon(ui, response.rect.center(), true, true, palette);
         } else if pane_button(ui, true, workspace.navigator, palette).clicked() {
             workspace.navigator = !workspace.navigator;
         }
-        let reserved = if compact { 126.0 } else { 420.0 };
+        let reserved = if compact { 136.0 } else { 432.0 };
         let title_width = (ui.available_width() - reserved).clamp(24.0, 300.0);
         ui.allocate_ui_with_layout(
             vec2(title_width, 32.0),
@@ -43,7 +47,7 @@ pub(super) fn toolbar(
                 }
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
-                    ui.add(Label::new(semibold(name).size(12.0)).truncate())
+                    ui.add(Label::new(semibold(name).size(13.0)).truncate())
                         .on_hover_text(name);
                     if !compact {
                         let status = if loading {
@@ -55,7 +59,7 @@ pub(super) fn toolbar(
                                 .unwrap_or_else(|| "No iOS version".into())
                         };
                         ui.add(
-                            Label::new(RichText::new(status).size(10.0).color(palette.muted))
+                            Label::new(RichText::new(status).size(11.0).color(palette.muted))
                                 .truncate(),
                         );
                     }
@@ -106,6 +110,19 @@ pub(super) fn toolbar(
             if loading {
                 ui.spinner().on_hover_text("Refreshing app details…");
             }
+            let drag = ui.interact(
+                ui.available_rect_before_wrap(),
+                ui.id().with("toolbar_drag"),
+                Sense::click_and_drag(),
+            );
+            if drag.drag_started() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
+            if drag.double_clicked() {
+                let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+            }
         });
     });
     action
@@ -125,17 +142,34 @@ pub(super) fn version_picker(
         format!("iOS  {version}")
     };
     ui.add_enabled_ui(!loading, |ui| {
+        ui.spacing_mut().button_padding = vec2(12.0, 5.0);
         let widgets = &mut ui.visuals_mut().widgets;
         for widget in [
             &mut widgets.inactive,
             &mut widgets.hovered,
             &mut widgets.active,
         ] {
-            widget.corner_radius = egui::CornerRadius::same(11);
+            widget.corner_radius = egui::CornerRadius::same(14);
         }
         egui::ComboBox::from_id_salt("version_selector")
             .selected_text(text)
-            .width(152.0)
+            .width(170.0)
+            .icon(|ui, rect, visuals, _| {
+                let c = rect.center();
+                let stroke = Stroke::new(1.2, visuals.fg_stroke.color);
+                ui.painter().add(egui::Shape::line(
+                    vec![
+                        c + vec2(-3.0, -2.0),
+                        c + vec2(0.0, -5.0),
+                        c + vec2(3.0, -2.0),
+                    ],
+                    stroke,
+                ));
+                ui.painter().add(egui::Shape::line(
+                    vec![c + vec2(-3.0, 2.0), c + vec2(0.0, 5.0), c + vec2(3.0, 2.0)],
+                    stroke,
+                ));
+            })
             .show_ui(ui, |ui| {
                 if let Some(details) = details {
                     for version in &details.versions {
@@ -189,9 +223,9 @@ pub(super) fn navigator(ui: &mut Ui, workspace: &mut Workspace, name: &str, pale
                     ui.horizontal(|ui| {
                         let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                         Document::Information.paint_icon(ui, rect.min, 18.0, palette.accent);
-                        ui.add(Label::new(semibold(name).size(12.0)).truncate());
+                        ui.add(Label::new(semibold(name).size(13.0)).truncate());
                     });
-                    ui.add_space(4.0);
+                    ui.add_space(6.0);
                     navigation_rows(ui, workspace, palette, false);
                 });
         });
@@ -260,7 +294,7 @@ fn document_row(
         palette.muted
     };
     let response = ui.add_sized(
-        [ui.available_width(), 24.0],
+        [ui.available_width(), 25.0],
         Button::selectable(selected, "").fill(if selected {
             palette.selection
         } else {
@@ -281,16 +315,16 @@ fn document_row(
     } else {
         document.icon_color(ui.visuals().dark_mode)
     };
-    document.paint_icon(ui, rect.min + vec2(6.0, 5.0), 14.0, icon_color);
-    let galley = egui::WidgetText::from(RichText::new(document.title()).size(12.0).color(color))
+    document.paint_icon(ui, rect.min + vec2(5.0, 4.5), 16.0, icon_color);
+    let galley = egui::WidgetText::from(RichText::new(document.title()).size(13.0).color(color))
         .into_galley(
             ui,
             Some(egui::TextWrapMode::Truncate),
-            (rect.width() - 36.0).max(0.0),
+            (rect.width() - 35.0).max(0.0),
             egui::TextStyle::Body,
         );
     ui.painter().galley(
-        egui::pos2(rect.left() + 27.0, rect.center().y - galley.size().y * 0.5),
+        egui::pos2(rect.left() + 29.0, rect.center().y - galley.size().y * 0.5),
         galley,
         color,
     );
@@ -334,8 +368,12 @@ pub(super) fn tabs(ui: &mut Ui, workspace: &mut Workspace, palette: Palette) {
                                 },
                                 document.title()
                             );
-                            let width =
-                                (document.title().len() as f32 * 5.6 + 36.0).clamp(118.0, 180.0);
+                            let title_galley = ui.painter().layout_no_wrap(
+                                title.clone(),
+                                egui::FontId::proportional(12.0),
+                                palette.text,
+                            );
+                            let width = (title_galley.size().x + 38.0).clamp(118.0, 190.0);
                             let response = ui.add_sized(
                                 [width, 28.0],
                                 Button::selectable(active, "")
@@ -360,7 +398,7 @@ pub(super) fn tabs(ui: &mut Ui, workspace: &mut Workspace, palette: Palette) {
                             );
                             let color = if active { palette.text } else { palette.muted };
                             let galley = egui::WidgetText::from(
-                                RichText::new(title).size(11.0).color(color),
+                                RichText::new(title).size(12.0).color(color),
                             )
                             .into_galley(
                                 ui,
@@ -381,12 +419,23 @@ pub(super) fn tabs(ui: &mut Ui, workspace: &mut Workspace, palette: Palette) {
                             }
                             let close = ui.add_enabled(
                                 workspace.tabs.len() > 1,
-                                Button::new(RichText::new("×").size(12.0).color(palette.muted))
+                                Button::new("")
                                     .fill(fill)
                                     .stroke(Stroke::NONE)
                                     .corner_radius(0)
                                     .min_size(vec2(20.0, 28.0)),
                             );
+                            let center = close.rect.center();
+                            let close_stroke = Stroke::new(1.0, palette.muted);
+                            for sign in [-1.0, 1.0] {
+                                ui.painter().line_segment(
+                                    [
+                                        center + vec2(-2.5, -2.5 * sign),
+                                        center + vec2(2.5, 2.5 * sign),
+                                    ],
+                                    close_stroke,
+                                );
+                            }
                             close.widget_info(|| {
                                 egui::WidgetInfo::labeled(
                                     egui::WidgetType::Button,
@@ -453,7 +502,7 @@ pub(super) fn jump_bar(
                     |ui| {
                         ui.set_width(breadcrumb_width);
                         ui.add(
-                            Label::new(RichText::new(text).size(11.0).color(palette.text))
+                            Label::new(RichText::new(text).size(12.0).color(palette.text))
                                 .truncate(),
                         );
                     },
@@ -582,18 +631,18 @@ fn inspector_contents(
 }
 
 fn inspector_section(ui: &mut Ui, label: &str, palette: Palette) {
-    ui.label(semibold(label).size(11.0).color(palette.muted));
+    ui.label(semibold(label).size(12.0).color(palette.muted));
     ui.add_space(4.0);
 }
 
 fn inspector_value(ui: &mut Ui, label: &str, value: &str, palette: Palette) {
     ui.horizontal_top(|ui| {
-        ui.allocate_ui_with_layout(vec2(62.0, 0.0), Layout::right_to_left(Align::Min), |ui| {
-            ui.set_width(62.0);
-            ui.add(Label::new(RichText::new(label).size(11.0).color(palette.text)).wrap());
+        ui.allocate_ui_with_layout(vec2(72.0, 0.0), Layout::right_to_left(Align::Min), |ui| {
+            ui.set_width(72.0);
+            ui.add(Label::new(RichText::new(label).size(12.0).color(palette.muted)).wrap());
         });
         ui.add(
-            Label::new(RichText::new(if value.is_empty() { "—" } else { value }).size(11.0))
+            Label::new(RichText::new(if value.is_empty() { "—" } else { value }).size(12.0))
                 .wrap()
                 .selectable(true),
         );
@@ -653,15 +702,22 @@ fn pane_button(ui: &mut Ui, left: bool, selected: bool, palette: Palette) -> egu
         "Toggle inspector"
     };
     let response = ui.add_sized(
-        [30.0, 28.0],
+        [36.0, 30.0],
         Button::new("")
             .fill(if selected {
                 palette.control
             } else {
                 Color32::TRANSPARENT
             })
-            .corner_radius(8)
-            .stroke(Stroke::NONE),
+            .corner_radius(15)
+            .stroke(Stroke::new(
+                1.0,
+                if selected {
+                    palette.hover
+                } else {
+                    Color32::TRANSPARENT
+                },
+            )),
     );
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
@@ -685,8 +741,8 @@ fn paint_pane_icon(ui: &Ui, center: egui::Pos2, left: bool, selected: bool, pale
         } else {
             "sidebar.right"
         },
-        center - vec2(8.5, 8.5),
-        17.0,
+        center - vec2(10.0, 10.0),
+        20.0,
         color,
     ) {
         return;

@@ -115,6 +115,10 @@ fn render_document(
     let ctx = egui::Context::default();
     crate::style::configure(&ctx);
     ctx.set_theme(theme);
+    // Exercise the actual main-window toolbar inset as well as the document layout.
+    ctx.data_mut(|data| {
+        data.insert_temp(egui::Id::new("unified_titlebar"), cfg!(target_os = "macos"));
+    });
     let credentials = AppleCredentials::test_credentials("test");
     let mut view = IosView::default();
     view.cache.insert(

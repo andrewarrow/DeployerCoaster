@@ -37,10 +37,11 @@ pub fn configure(context: &egui::Context) {
             let data = FontData::from_owned(bytes);
             #[cfg(target_os = "macos")]
             let data = {
-                // Use San Francisco's UI text cut at macOS control sizes.
+                // Use San Francisco’s text cut and fractional glyph positioning.
+                // macOS does not grid-fit UI text; hinting changes its spacing and weight.
                 let mut tweak = egui::FontTweak {
-                    hinting: Some(true),
-                    subpixel_binning: Some(false),
+                    hinting: Some(false),
+                    subpixel_binning: Some(true),
                     ..Default::default()
                 };
                 tweak.coords.push(b"opsz", 13.0);
@@ -98,8 +99,8 @@ pub fn configure(context: &egui::Context) {
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
         style.spacing.button_padding = egui::vec2(8.0, 3.0);
         style.spacing.interact_size.y = 24.0;
-        style.visuals.text_options.font_hinting = true;
-        style.visuals.text_options.subpixel_binning = false;
+        style.visuals.text_options.font_hinting = !cfg!(target_os = "macos");
+        style.visuals.text_options.subpixel_binning = cfg!(target_os = "macos");
         if theme == egui::Theme::Dark {
             style.visuals.panel_fill = Color32::from_gray(37);
             style.visuals.window_fill = Color32::from_gray(43);
@@ -146,7 +147,7 @@ pub fn configure(context: &egui::Context) {
             style.visuals.hyperlink_color = Color32::from_rgb(0, 99, 225);
         }
         style.visuals.override_text_color = Some(if theme == egui::Theme::Dark {
-            Color32::from_gray(235)
+            Color32::from_gray(224)
         } else {
             Color32::from_gray(30)
         });

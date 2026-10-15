@@ -27,6 +27,54 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::{commands::Command, metadata};
 
+/// Align the native window buttons with the custom toolbar without replacing
+/// the buttons or their AppKit hit targets.
+pub(crate) fn align_titlebar_buttons(window: &winit::window::Window, toolbar_height: f64) {
+    use objc2_foundation::{NSPoint, NSRect};
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    if MainThreadMarker::new().is_none() || window.fullscreen().is_some() {
+        return;
+    }
+    let Ok(handle) = window.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return;
+    };
+    // SAFETY: winit owns this NSView for the lifetime of `window`. All AppKit
+    // messages below run on the main thread and use public NSWindow/NSView APIs.
+    unsafe {
+        let view = &*handle.ns_view.as_ptr().cast::<AnyObject>();
+        let native_window: Option<Retained<AnyObject>> = msg_send![view, window];
+        let Some(native_window) = native_window else {
+            return;
+        };
+        for button_type in [0_usize, 1, 2] {
+            let button: Option<Retained<AnyObject>> =
+                msg_send![&native_window, standardWindowButton: button_type];
+            let Some(button) = button else { continue };
+            let parent: Option<Retained<AnyObject>> = msg_send![&button, superview];
+            let Some(parent) = parent else { continue };
+            let frame: NSRect = msg_send![&button, frame];
+            let bounds: NSRect = msg_send![&parent, bounds];
+            let flipped: bool = msg_send![&parent, isFlipped];
+            let center = toolbar_height * 0.5;
+            let y = if flipped {
+                center - frame.size.height * 0.5
+            } else {
+                bounds.size.height - center - frame.size.height * 0.5
+            };
+            if y >= 0.0
+                && y + frame.size.height <= bounds.size.height
+                && (y - frame.origin.y).abs() > 0.1
+            {
+                let _: () = msg_send![&button, setFrameOrigin: NSPoint::new(frame.origin.x, y)];
+            }
+        }
+    }
+}
+
 /// Cache the OS's symbol artwork per egui context. Keep the mask white so the
 /// same Retina-resolution texture can follow selection, appearance, and scale.
 pub(crate) fn paint_symbol(
@@ -74,7 +122,7 @@ fn symbol_image(name: &str) -> Option<egui::ColorImage> {
             NSFontWeightRegular
         })
         .configurationByApplyingConfiguration(
-            &NSImageSymbolConfiguration::configurationWithHierarchicalColor(&NSColor::whiteColor()),
+            &NSImageSymbolConfiguration::configurationPreferringMonochrome(),
         );
         let image = image.imageWithSymbolConfiguration(&config)?;
         let tiff = image.TIFFRepresentation()?;
@@ -86,7 +134,13 @@ fn symbol_image(name: &str) -> Option<egui::ColorImage> {
                 &NSDictionary::new(),
             )
         }?;
-        let pixels = image::load_from_memory(&data.to_vec()).ok()?.into_rgba8();
+        let mut pixels = image::load_from_memory(&data.to_vec()).ok()?.into_rgba8();
+        // Monochrome symbols preserve opaque fills. Hierarchical rendering fades
+        // secondary layers, making small navigator icons look disabled. Convert
+        // AppKit's template color to white so egui applies the requested tint.
+        for pixel in pixels.pixels_mut() {
+            pixel.0[..3].fill(255);
+        }
         Some(egui::ColorImage::from_rgba_unmultiplied(
             [pixels.width() as usize, pixels.height() as usize],
             &pixels,

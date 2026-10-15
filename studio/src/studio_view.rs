@@ -35,6 +35,10 @@ impl StudioView {
         self.selected_app.as_ref().map(AppleApp::title)
     }
 
+    pub(crate) fn has_selected_document(&self) -> bool {
+        !self.picking && self.selected_app.is_some()
+    }
+
     fn set_account(&mut self, account: Option<String>) {
         if self.account != account {
             self.recents_path = account.as_deref().and_then(catalog::recents_path);

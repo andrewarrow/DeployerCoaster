@@ -72,28 +72,36 @@ impl DesktopWindow {
         });
         let logo = image::load_from_memory(metadata::LOGO_BYTES)?.into_rgba8();
         let icon = Icon::from_rgba(logo.to_vec(), logo.width(), logo.height())?;
-        let window = Arc::new(
-            event_loop.create_window(
-                Window::default_attributes()
-                    .with_title(title)
-                    .with_inner_size(if kind.is_some() {
-                        if kind == Some(app::AppWindow::Settings) {
-                            LogicalSize::new(820.0, 620.0)
-                        } else if kind == Some(app::AppWindow::Sales) {
-                            LogicalSize::new(900.0, 680.0)
-                        } else if kind == Some(app::AppWindow::Wizard) {
-                            LogicalSize::new(560.0, 400.0)
-                        } else {
-                            LogicalSize::new(640.0, 560.0)
-                        }
-                    } else {
-                        LogicalSize::new(1440.0, 900.0)
-                    })
-                    .with_min_inner_size(LogicalSize::new(390.0, 360.0))
-                    .with_window_icon(Some(icon))
-                    .with_visible(false),
-            )?,
-        );
+        let attributes = Window::default_attributes()
+            .with_title(title)
+            .with_inner_size(if kind.is_some() {
+                if kind == Some(app::AppWindow::Settings) {
+                    LogicalSize::new(820.0, 620.0)
+                } else if kind == Some(app::AppWindow::Sales) {
+                    LogicalSize::new(900.0, 680.0)
+                } else if kind == Some(app::AppWindow::Wizard) {
+                    LogicalSize::new(560.0, 400.0)
+                } else {
+                    LogicalSize::new(640.0, 560.0)
+                }
+            } else {
+                LogicalSize::new(1440.0, 900.0)
+            })
+            .with_min_inner_size(LogicalSize::new(390.0, 360.0))
+            .with_window_icon(Some(icon))
+            .with_visible(false);
+        #[cfg(target_os = "macos")]
+        let attributes = if kind.is_none() {
+            use winit::platform::macos::WindowAttributesExtMacOS;
+            context.data_mut(|data| data.insert_temp(egui::Id::new("unified_titlebar"), true));
+            attributes
+                .with_titlebar_transparent(true)
+                .with_title_hidden(true)
+                .with_fullsize_content_view(true)
+        } else {
+            attributes
+        };
+        let window = Arc::new(event_loop.create_window(attributes)?);
         let mut painter = pollster::block_on(Painter::new(
             context.clone(),
             egui_wgpu::WgpuConfiguration::default(),
@@ -248,6 +256,8 @@ impl Desktop {
         );
         if desktop.kind.is_none() {
             desktop.window.set_title(&self.app.title());
+            #[cfg(target_os = "macos")]
+            macos::align_titlebar_buttons(&desktop.window, self.app.native_titlebar_height());
         }
         if desktop.show_on_redraw {
             desktop.window.set_visible(true);
@@ -262,6 +272,19 @@ impl Desktop {
                 self.next_repaint
                     .map_or(deadline, |next| next.min(deadline)),
             );
+        }
+        if let Some(viewport) = output.viewport_output.get(&ViewportId::ROOT) {
+            for command in &viewport.commands {
+                match command {
+                    egui::ViewportCommand::StartDrag => {
+                        let _ = desktop.window.drag_window();
+                    }
+                    egui::ViewportCommand::Maximized(maximized) => {
+                        desktop.window.set_maximized(*maximized);
+                    }
+                    _ => {}
+                }
+            }
         }
         match window_action {
             app::AppWindowAction::None => {}
@@ -279,6 +302,13 @@ impl Desktop {
             event_loop.exit();
         }
     }
+}
+
+pub(crate) fn native_titlebar_active(context: &egui::Context) -> bool {
+    context.data(|data| {
+        data.get_temp::<bool>(egui::Id::new("unified_titlebar"))
+            .unwrap_or(false)
+    })
 }
 
 impl ApplicationHandler<Instant> for Desktop {

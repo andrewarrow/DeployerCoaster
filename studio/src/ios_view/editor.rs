@@ -16,6 +16,12 @@ pub(super) fn document(
     loading: bool,
     action: &mut Option<Action>,
 ) {
+    // Xcode's inspectors and forms use a smaller type size than its navigator.
+    for text_style in [egui::TextStyle::Body, egui::TextStyle::Button] {
+        ui.style_mut()
+            .text_styles
+            .insert(text_style, egui::FontId::proportional(12.0));
+    }
     if ui.ctx().content_rect().width() < 700.0 {
         super::chrome::version_picker(ui, Some(details), loading, action);
         ui.add_space(12.0);
@@ -42,7 +48,7 @@ fn information(ui: &mut Ui, workspace: &mut Workspace, details: &AppDetails, pal
         &locale_name(attr(&details.app, "primaryLocale")),
         palette,
     );
-    ui.add_space(24.0);
+    section_break(ui);
     section(ui, "App Store Categories", palette);
     if let Some(info) = &details.info {
         read_row(
@@ -67,7 +73,7 @@ fn information(ui: &mut Ui, workspace: &mut Workspace, details: &AppDetails, pal
             palette,
         );
     }
-    ui.add_space(24.0);
+    section_break(ui);
     section(ui, "Selected Version", palette);
     if let Some(version) = &details.version {
         read_row(ui, "Status", &readable(state(version)), palette);
@@ -92,7 +98,7 @@ fn information(ui: &mut Ui, workspace: &mut Workspace, details: &AppDetails, pal
             palette,
         );
         read_row(ui, "Created", attr(version, "createdDate"), palette);
-        draft_note(ui, palette);
+        field_note(ui, palette);
     } else {
         unavailable(
             ui,
@@ -126,10 +132,9 @@ fn listing(ui: &mut Ui, workspace: &mut Workspace, details: &AppDetails, palette
             palette,
         );
     }
-    ui.add_space(24.0);
+    section_break(ui);
     section(ui, "Version Details", palette);
     if let Some(version) = version {
-        draft_note(ui, palette);
         let route = format!(
             "{}/localizations/{}",
             version_route(details),
@@ -152,6 +157,7 @@ fn listing(ui: &mut Ui, workspace: &mut Workspace, details: &AppDetails, palette
         ] {
             edit_field(ui, workspace, version, &route, field, &scope, palette);
         }
+        field_note(ui, palette);
     } else if details.version.is_none() {
         unavailable(
             ui,
@@ -203,7 +209,7 @@ fn privacy(ui: &mut Ui, workspace: &mut Workspace, details: &AppDetails, palette
             palette,
         );
     }
-    ui.add_space(24.0);
+    section_break(ui);
     section(ui, "Content Rights", palette);
     let route = app_route(details);
     let field = "contentRightsDeclaration";
@@ -213,31 +219,28 @@ fn privacy(ui: &mut Ui, workspace: &mut Workspace, details: &AppDetails, palette
         |edit| edit.value.clone(),
     );
     let before = value.clone();
-    let rights_label = ui.label(
-        RichText::new("Third-party content")
-            .size(12.0)
-            .color(palette.muted),
-    );
-    egui::ComboBox::from_id_salt("content_rights")
-        .width(ui.available_width().min(420.0))
-        .selected_text(if value.is_empty() {
-            "Not set".into()
-        } else {
-            readable(&value)
-        })
-        .show_ui(ui, |ui| {
-            for (id, label) in [
-                (
-                    "DOES_NOT_USE_THIRD_PARTY_CONTENT",
-                    "Does not use third-party content",
-                ),
-                ("USES_THIRD_PARTY_CONTENT", "Uses third-party content"),
-            ] {
-                ui.selectable_value(&mut value, id.into(), label);
-            }
-        })
-        .response
-        .labelled_by(rights_label.id);
+    form_row(ui, "Third-party content", palette, 3.0, |ui, label_id| {
+        egui::ComboBox::from_id_salt("content_rights")
+            .width(ui.available_width().min(300.0))
+            .selected_text(if value.is_empty() {
+                "Not set".into()
+            } else {
+                readable(&value)
+            })
+            .show_ui(ui, |ui| {
+                for (id, label) in [
+                    (
+                        "DOES_NOT_USE_THIRD_PARTY_CONTENT",
+                        "Does not use third-party content",
+                    ),
+                    ("USES_THIRD_PARTY_CONTENT", "Uses third-party content"),
+                ] {
+                    ui.selectable_value(&mut value, id.into(), label);
+                }
+            })
+            .response
+            .labelled_by(label_id)
+    });
     if before != value {
         workspace.edit(
             &route,
@@ -248,7 +251,7 @@ fn privacy(ui: &mut Ui, workspace: &mut Workspace, details: &AppDetails, palette
             "App",
         );
     }
-    draft_note(ui, palette);
+    field_note(ui, palette);
 }
 
 fn versions(
@@ -463,7 +466,7 @@ fn edit_field(
             .add(
                 edit.id_salt(&key)
                     .desired_width(if field.rows == 1 {
-                        ui.available_width().min(340.0)
+                        ui.available_width().min(300.0)
                     } else {
                         f32::INFINITY
                     })
@@ -510,8 +513,14 @@ fn edit_field(
 }
 
 fn section(ui: &mut Ui, title: &str, palette: Palette) {
-    ui.add(Label::new(semibold(title).size(13.0).color(palette.text)).wrap());
+    ui.add(Label::new(semibold(title).size(12.0).color(palette.text)).wrap());
     ui.add_space(8.0);
+}
+
+fn section_break(ui: &mut Ui) {
+    ui.add_space(16.0);
+    ui.separator();
+    ui.add_space(10.0);
 }
 
 fn read_row(ui: &mut Ui, label: &str, value: &str, palette: Palette) {
@@ -533,13 +542,18 @@ fn form_row<R>(
 ) -> R {
     if ui.available_width() < 460.0 {
         ui.vertical(|ui| {
-            let label =
-                ui.add(Label::new(RichText::new(label).size(12.0).color(palette.muted)).wrap());
-            contents(ui, label.id)
+            let label_id = if label.is_empty() {
+                ui.id()
+            } else {
+                ui.add(Label::new(RichText::new(label).size(12.0).color(palette.muted)).wrap())
+                    .id
+            };
+            contents(ui, label_id)
         })
         .inner
     } else {
         ui.horizontal_top(|ui| {
+            ui.set_min_height(18.0);
             let label_id = ui
                 .allocate_ui_with_layout(vec2(160.0, 0.0), Layout::top_down(Align::Max), |ui| {
                     ui.set_width(160.0);
@@ -547,7 +561,7 @@ fn form_row<R>(
                         ui.add_space(label_top);
                     }
                     ui.add(
-                        Label::new(RichText::new(label).color(palette.muted))
+                        Label::new(RichText::new(label).size(12.0).color(palette.muted))
                             .halign(Align::Max)
                             .wrap(),
                     )
@@ -565,16 +579,22 @@ fn form_row<R>(
     }
 }
 
+fn field_note(ui: &mut Ui, palette: Palette) {
+    ui.add_space(4.0);
+    form_row(ui, "", palette, 0.0, |ui, _| {
+        draft_note(ui, palette);
+    });
+}
+
 fn draft_note(ui: &mut Ui, palette: Palette) {
     ui.add(
         Label::new(
             RichText::new("Edits stay in this session. Publishing is not available yet.")
-                .size(12.0)
+                .size(11.0)
                 .color(palette.muted),
         )
         .wrap(),
     );
-    ui.add_space(8.0);
 }
 
 fn unavailable(ui: &mut Ui, details: &AppDetails, prefix: &str, message: &str, palette: Palette) {

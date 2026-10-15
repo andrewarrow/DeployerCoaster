@@ -147,6 +147,35 @@ impl App {
         if let Some(command) = self.desktop_menu(ui) {
             self.command(command);
         }
+        if crate::native_titlebar_active(&ctx) && !self.studio_view.has_selected_document() {
+            egui::Panel::top("native_window_title")
+                .exact_size(32.0)
+                .show_separator_line(false)
+                .frame(egui::Frame::new().fill(ui.visuals().panel_fill))
+                .show(ui, |ui| {
+                    let rect = ui.max_rect();
+                    let response = ui.interact(
+                        rect,
+                        ui.id().with("window_drag"),
+                        egui::Sense::click_and_drag(),
+                    );
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        metadata::APP_NAME,
+                        egui::FontId::new(13.0, egui::FontFamily::Name("semibold".into())),
+                        ui.visuals().text_color(),
+                    );
+                    if response.drag_started() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                    }
+                    if response.double_clicked() {
+                        let maximized =
+                            ui.input(|input| input.viewport().maximized.unwrap_or(false));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                    }
+                });
+        }
         self.apple_store.set_credentials(self.apple.credentials());
         if let Some(command) = self.studio_view.ui(ui, &mut self.apple_store) {
             self.command(command);
@@ -528,6 +557,15 @@ impl App {
             "Could not open the {} window. Please try again.",
             window.title()
         ));
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn native_titlebar_height(&self) -> f64 {
+        if self.studio_view.has_selected_document() {
+            44.0
+        } else {
+            32.0
+        }
     }
 
     #[cfg(target_os = "macos")]

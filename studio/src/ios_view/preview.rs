@@ -125,9 +125,9 @@ fn screenshot(
     }
     let screen = ScreenDescriptor {
         size_in_pixels: [width, height],
-        pixels_per_point: 1.0,
+        pixels_per_point: output.pixels_per_point,
     };
-    let jobs = ctx.tessellate(output.shapes, 1.0);
+    let jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
     let mut encoder = device.create_command_encoder(&Default::default());
     let buffers = renderer.update_buffers(&device, &queue, &mut encoder, &jobs, &screen);
     let view = texture.create_view(&Default::default());
@@ -195,7 +195,7 @@ fn render_ios_workspace_previews() {
 
     for theme in [egui::Theme::Light, egui::Theme::Dark] {
         for (document, widths) in [
-            (Document::Information, &[1440][..]),
+            (Document::Information, &[390, 768, 1280, 1440][..]),
             (Document::Listing, &[390, 768, 1280, 1440][..]),
         ] {
             for &width in widths {
@@ -210,6 +210,8 @@ fn render_ios_workspace_previews() {
                 };
                 let ctx = egui::Context::default();
                 crate::style::configure(&ctx);
+                // Inspect text and system symbol rendering at native Retina scale.
+                ctx.set_pixels_per_point(2.0);
                 ctx.set_theme(theme);
                 ctx.style_mut_of(theme, |style| style.animation_time = 0.0);
 
@@ -282,8 +284,8 @@ fn render_ios_workspace_previews() {
                     latest.unwrap(),
                     textures,
                     path.to_str().unwrap(),
-                    width,
-                    height,
+                    width * 2,
+                    height * 2,
                 );
                 println!("Saved {}", path.display());
             }

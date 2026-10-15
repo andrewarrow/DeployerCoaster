@@ -181,8 +181,8 @@ impl IosView {
             if width >= 700.0 {
                 let mut expanded = workspace.navigator;
                 egui::Panel::left("resource_navigator")
-                    .default_size(224.0)
-                    .size_range(188.0..=280.0)
+                    .default_size(236.0)
+                    .size_range(220.0..=300.0)
                     .frame(palette.frame(palette.sidebar, Margin::ZERO))
                     .show_collapsible(ui, &mut expanded, |ui| {
                         chrome::navigator(ui, workspace, name, palette)
@@ -192,9 +192,9 @@ impl IosView {
             if width >= 1120.0 {
                 let mut expanded = workspace.inspector;
                 egui::Panel::right("resource_inspector")
-                    .default_size(252.0)
-                    .size_range(224.0..=300.0)
-                    .frame(palette.frame(palette.sidebar, Margin::ZERO))
+                    .default_size(260.0)
+                    .size_range(240.0..=320.0)
+                    .frame(palette.frame(palette.inspector, Margin::ZERO))
                     .show_collapsible(ui, &mut expanded, |ui| {
                         chrome::inspector(ui, workspace, details, palette)
                     });
@@ -211,7 +211,7 @@ impl IosView {
                         .show(ui, |ui| {
                             let margin = if ui.available_width() < 500.0 { 16 } else { 28 };
                             Frame::new()
-                                .inner_margin(Margin::symmetric(margin, 24))
+                                .inner_margin(Margin::symmetric(margin, 18))
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width().min(760.0));
                                     if let Some(error) =
@@ -276,6 +276,7 @@ impl IosView {
 struct Palette {
     toolbar: Color32,
     sidebar: Color32,
+    inspector: Color32,
     editor: Color32,
     field: Color32,
     control: Color32,
@@ -293,24 +294,26 @@ impl Palette {
     fn new(dark: bool) -> Self {
         if dark {
             Self {
-                toolbar: Color32::from_gray(45),
-                sidebar: Color32::from_gray(39),
-                editor: Color32::from_gray(37),
-                field: Color32::from_gray(26),
-                control: Color32::from_gray(60),
-                hover: Color32::from_gray(69),
-                tab: Color32::from_gray(57),
-                border: Color32::from_gray(63),
+                toolbar: Color32::from_rgb(45, 44, 45),
+                sidebar: Color32::from_rgb(41, 40, 41),
+                inspector: Color32::from_rgb(43, 42, 43),
+                editor: Color32::from_rgb(36, 35, 36),
+                field: Color32::from_rgb(29, 28, 29),
+                control: Color32::from_gray(67),
+                hover: Color32::from_gray(78),
+                tab: Color32::from_gray(55),
+                border: Color32::from_gray(56),
                 text: Color32::from_gray(222),
                 muted: Color32::from_gray(166),
-                accent: Color32::from_rgb(10, 155, 255),
-                selection: Color32::from_rgb(0, 99, 225),
+                accent: Color32::from_rgb(10, 132, 255),
+                selection: Color32::from_rgb(0, 88, 208),
                 error: Color32::from_rgb(255, 137, 137),
             }
         } else {
             Self {
                 toolbar: Color32::from_gray(236),
-                sidebar: Color32::from_gray(242),
+                sidebar: Color32::from_gray(239),
+                inspector: Color32::from_gray(246),
                 editor: Color32::WHITE,
                 field: Color32::WHITE,
                 control: Color32::from_gray(250),
@@ -320,7 +323,7 @@ impl Palette {
                 text: Color32::from_gray(38),
                 muted: Color32::from_gray(103),
                 accent: Color32::from_rgb(0, 112, 220),
-                selection: Color32::from_rgb(0, 99, 225),
+                selection: Color32::from_rgb(0, 88, 208),
                 error: Color32::from_rgb(180, 42, 45),
             }
         }
@@ -334,7 +337,7 @@ fn configure_workspace(ui: &mut Ui, palette: Palette) {
     let style = ui.style_mut();
     style
         .text_styles
-        .insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
+        .insert(egui::TextStyle::Body, egui::FontId::proportional(13.0));
     style
         .text_styles
         .insert(egui::TextStyle::Button, egui::FontId::proportional(12.0));
@@ -342,6 +345,7 @@ fn configure_workspace(ui: &mut Ui, palette: Palette) {
     style.spacing.button_padding = egui::vec2(7.0, 3.0);
     style.spacing.interact_size.y = 22.0;
     style.spacing.indent = 14.0;
+    style.animation_time = 0.15;
     style.visuals.override_text_color = Some(palette.text);
     style.visuals.weak_text_color = Some(palette.muted);
     style.visuals.indent_has_left_vline = false;
