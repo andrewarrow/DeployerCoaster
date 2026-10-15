@@ -128,6 +128,7 @@ impl Transport for ParsequeradeApi {
             );
         }
         let url = resource_url(&self.credentials.base_url, path)?;
+        log::debug!(target: "parsequerade", "GET {path}");
         let response = self
             .http
             .get(url)
@@ -135,10 +136,15 @@ impl Transport for ParsequeradeApi {
             .header(reqwest::header::ACCEPT, "application/json")
             .send()
             .map_err(|_| {
+                log::debug!(target: "parsequerade", "GET {path}: request failed");
                 "Could not reach Parsequerade. Check your connection and try again.".to_owned()
             })?;
         let status = response.status().as_u16();
-        Ok((status, read_response(response)?))
+        let value = read_response(response).inspect_err(|error| {
+            log::debug!(target: "parsequerade", "GET {path} -> HTTP {status}: {error}");
+        })?;
+        log::debug!(target: "parsequerade", "GET {path} -> HTTP {status}\n{value:#}");
+        Ok((status, value))
     }
 }
 

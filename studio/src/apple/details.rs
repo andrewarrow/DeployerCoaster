@@ -156,6 +156,12 @@ pub(crate) fn load_for_version<T: Transport>(
     match reader.list(&format!("/apps/{app_id}/app-infos?limit=200")) {
         Ok(infos) => {
             details.info = preferred(&infos).cloned();
+            log::debug!(
+                target: "parsequerade",
+                "App {app_id}: selected app information from {} resources:\n{:#}",
+                infos.len(),
+                details.info.as_ref().unwrap_or(&Value::Null)
+            );
             if let Some(info) = &details.info {
                 let info_id = id(info)?;
                 match reader.list(&format!(
