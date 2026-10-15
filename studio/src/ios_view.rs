@@ -167,14 +167,14 @@ impl IosView {
             configure_workspace(ui, palette);
             let width = ui.available_width();
             egui::Panel::top("workspace_toolbar")
-                .exact_size(48.0)
-                .frame(palette.frame(palette.toolbar, Margin::symmetric(10, 6)))
+                .exact_size(44.0)
+                .frame(palette.frame(palette.toolbar, Margin::symmetric(10, 5)))
                 .show(ui, |ui| {
                     action = chrome::toolbar(ui, workspace, details, name, loading, palette);
                 });
             egui::Panel::bottom("workspace_status")
-                .exact_size(26.0)
-                .frame(palette.frame(palette.toolbar, Margin::symmetric(12, 4)))
+                .exact_size(22.0)
+                .frame(palette.frame(palette.toolbar, Margin::symmetric(10, 2)))
                 .show(ui, |ui| {
                     chrome::status(ui, workspace, details, loading, palette)
                 });
@@ -213,7 +213,7 @@ impl IosView {
                             Frame::new()
                                 .inner_margin(Margin::symmetric(margin, 24))
                                 .show(ui, |ui| {
-                                    ui.set_width(ui.available_width().min(800.0));
+                                    ui.set_width(ui.available_width().min(760.0));
                                     if let Some(error) =
                                         entry.and_then(|entry| entry.error.as_deref())
                                     {
@@ -277,6 +277,10 @@ struct Palette {
     toolbar: Color32,
     sidebar: Color32,
     editor: Color32,
+    field: Color32,
+    control: Color32,
+    hover: Color32,
+    tab: Color32,
     border: Color32,
     text: Color32,
     muted: Color32,
@@ -289,26 +293,34 @@ impl Palette {
     fn new(dark: bool) -> Self {
         if dark {
             Self {
-                toolbar: Color32::from_rgb(44, 44, 48),
-                sidebar: Color32::from_rgb(36, 36, 40),
-                editor: Color32::from_rgb(30, 30, 33),
-                border: Color32::from_rgb(61, 61, 65),
-                text: Color32::from_gray(230),
-                muted: Color32::from_gray(169),
-                accent: Color32::from_rgb(91, 166, 255),
-                selection: Color32::from_rgb(37, 100, 183),
+                toolbar: Color32::from_gray(45),
+                sidebar: Color32::from_gray(39),
+                editor: Color32::from_gray(37),
+                field: Color32::from_gray(26),
+                control: Color32::from_gray(60),
+                hover: Color32::from_gray(69),
+                tab: Color32::from_gray(57),
+                border: Color32::from_gray(63),
+                text: Color32::from_gray(222),
+                muted: Color32::from_gray(166),
+                accent: Color32::from_rgb(10, 155, 255),
+                selection: Color32::from_rgb(0, 99, 225),
                 error: Color32::from_rgb(255, 137, 137),
             }
         } else {
             Self {
-                toolbar: Color32::from_rgb(237, 237, 239),
-                sidebar: Color32::from_rgb(246, 246, 248),
+                toolbar: Color32::from_gray(236),
+                sidebar: Color32::from_gray(242),
                 editor: Color32::WHITE,
-                border: Color32::from_rgb(213, 213, 217),
-                text: Color32::from_rgb(38, 38, 42),
-                muted: Color32::from_rgb(104, 104, 113),
-                accent: Color32::from_rgb(0, 102, 215),
-                selection: Color32::from_rgb(0, 103, 218),
+                field: Color32::WHITE,
+                control: Color32::from_gray(250),
+                hover: Color32::from_gray(226),
+                tab: Color32::WHITE,
+                border: Color32::from_gray(211),
+                text: Color32::from_gray(38),
+                muted: Color32::from_gray(103),
+                accent: Color32::from_rgb(0, 112, 220),
+                selection: Color32::from_rgb(0, 99, 225),
                 error: Color32::from_rgb(180, 42, 45),
             }
         }
@@ -322,18 +334,24 @@ fn configure_workspace(ui: &mut Ui, palette: Palette) {
     let style = ui.style_mut();
     style
         .text_styles
-        .insert(egui::TextStyle::Body, egui::FontId::proportional(13.0));
+        .insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
     style
         .text_styles
         .insert(egui::TextStyle::Button, egui::FontId::proportional(12.0));
-    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    style.spacing.button_padding = egui::vec2(8.0, 5.0);
-    style.spacing.interact_size.y = 28.0;
+    style.spacing.item_spacing = egui::vec2(8.0, 4.0);
+    style.spacing.button_padding = egui::vec2(7.0, 3.0);
+    style.spacing.interact_size.y = 22.0;
+    style.spacing.indent = 14.0;
     style.visuals.override_text_color = Some(palette.text);
+    style.visuals.weak_text_color = Some(palette.muted);
+    style.visuals.indent_has_left_vline = false;
     style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, palette.border);
     style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, palette.border);
-    style.visuals.widgets.inactive.weak_bg_fill = palette.editor;
-    style.visuals.text_edit_bg_color = Some(palette.editor);
+    style.visuals.widgets.inactive.bg_fill = palette.control;
+    style.visuals.widgets.inactive.weak_bg_fill = palette.control;
+    style.visuals.widgets.hovered.bg_fill = palette.hover;
+    style.visuals.widgets.hovered.weak_bg_fill = palette.hover;
+    style.visuals.text_edit_bg_color = Some(palette.field);
     style.visuals.selection.bg_fill = palette.selection;
     style.visuals.hyperlink_color = palette.accent;
     for widget in [

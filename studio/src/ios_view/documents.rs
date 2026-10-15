@@ -83,6 +83,70 @@ pub(super) const GROUPS: &[(&str, &[Document])] = &[
 ];
 
 impl Document {
+    pub(super) fn paint_icon(
+        self,
+        ui: &egui::Ui,
+        origin: egui::Pos2,
+        size: f32,
+        color: egui::Color32,
+    ) {
+        #[cfg(target_os = "macos")]
+        {
+            let symbol = match self {
+                Self::Information => "info.circle.fill",
+                Self::Listing => "globe",
+                Self::Media => "photo.on.rectangle.angled",
+                Self::Versions => "square.stack.3d.up",
+                Self::Review => "checkmark.seal",
+                Self::Builds => "shippingbox.fill",
+                Self::TestFlight => "airplane",
+                Self::AppClips => "appclip",
+                Self::BackgroundAssets => "square.stack.3d.up.fill",
+                Self::Pricing => "tag.fill",
+                Self::Purchases => "cart.fill",
+                Self::Subscriptions => "repeat",
+                Self::ProductPages => "rectangle.stack",
+                Self::Experiments => "testtube.2",
+                Self::Events => "calendar",
+                Self::Featuring => "star.fill",
+                Self::CustomerReviews => "star.bubble",
+                Self::Privacy => "hand.raised.fill",
+                Self::AgeRating => "person.crop.square",
+                Self::Accessibility => "accessibility",
+                Self::Agreements => "doc.text",
+                Self::GameCenter => "gamecontroller.fill",
+                Self::Changes => "arrow.triangle.branch",
+            };
+            if crate::macos::paint_symbol(ui, symbol, origin, size, color) {
+                return;
+            }
+        }
+        self.icon().paint(ui, origin, size, color);
+    }
+
+    pub(super) fn icon_color(self, dark: bool) -> egui::Color32 {
+        let (light, dark_color) = match self {
+            Self::Information | Self::Versions | Self::AppClips | Self::Accessibility => {
+                ([0, 112, 220], [10, 155, 255])
+            }
+            Self::Listing | Self::ProductPages | Self::TestFlight | Self::Privacy => {
+                ([0, 126, 165], [55, 190, 224])
+            }
+            Self::Media | Self::Experiments | Self::GameCenter => ([145, 78, 195], [191, 139, 234]),
+            Self::Pricing | Self::Purchases | Self::Subscriptions | Self::Review => {
+                ([39, 132, 57], [103, 194, 107])
+            }
+            Self::Builds
+            | Self::Events
+            | Self::CustomerReviews
+            | Self::Featuring
+            | Self::Changes => ([184, 103, 13], [236, 168, 76]),
+            _ => ([107, 112, 120], [165, 175, 188]),
+        };
+        let [r, g, b] = if dark { dark_color } else { light };
+        egui::Color32::from_rgb(r, g, b)
+    }
+
     pub(super) fn title(self) -> &'static str {
         match self {
             Self::Information => "App Information",

@@ -469,6 +469,7 @@ fn version_picker_requests_the_exact_selected_version() {
 #[test]
 fn loading_errors_warnings_and_missing_data_have_compact_feedback() {
     let ctx = egui::Context::default();
+    crate::style::configure(&ctx);
     let credentials = AppleCredentials::test_credentials("test");
     let mut view = IosView::default();
     view.select("123");

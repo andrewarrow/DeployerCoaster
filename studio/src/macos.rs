@@ -13,18 +13,86 @@ use objc2::{
 use objc2_app_kit::{
     NSAboutPanelOptionApplicationIcon, NSAboutPanelOptionApplicationName,
     NSAboutPanelOptionApplicationVersion, NSAboutPanelOptionCredits, NSAboutPanelOptionKey,
-    NSAboutPanelOptionVersion, NSApplication, NSApplicationActivationPolicy, NSColor,
-    NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags, NSFont,
-    NSFontAttributeName, NSForegroundColorAttributeName, NSImage, NSLinkAttributeName, NSMenu,
-    NSMenuItem, NSMutableParagraphStyle, NSParagraphStyleAttributeName, NSTextAlignment,
+    NSAboutPanelOptionVersion, NSApplication, NSApplicationActivationPolicy, NSBitmapImageFileType,
+    NSBitmapImageRep, NSColor, NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags,
+    NSFont, NSFontAttributeName, NSFontWeightRegular, NSForegroundColorAttributeName, NSImage,
+    NSImageSymbolConfiguration, NSLinkAttributeName, NSMenu, NSMenuItem, NSMutableParagraphStyle,
+    NSParagraphStyleAttributeName, NSTextAlignment,
 };
 use objc2_foundation::{
-    NSCopying, NSData, NSMutableAttributedString, NSMutableDictionary, NSObject, NSRange, NSString,
-    ns_string,
+    NSCopying, NSData, NSDictionary, NSMutableAttributedString, NSMutableDictionary, NSObject,
+    NSRange, NSString, ns_string,
 };
 use winit::event_loop::EventLoopProxy;
 
 use crate::{commands::Command, metadata};
+
+/// Cache the OS's symbol artwork per egui context. Keep the mask white so the
+/// same Retina-resolution texture can follow selection, appearance, and scale.
+pub(crate) fn paint_symbol(
+    ui: &egui::Ui,
+    name: &str,
+    origin: egui::Pos2,
+    size: f32,
+    color: egui::Color32,
+) -> bool {
+    let id = egui::Id::new(("sf_symbol", name));
+    let cached = ui
+        .ctx()
+        .data(|data| data.get_temp::<Option<egui::TextureHandle>>(id));
+    let texture = cached.unwrap_or_else(|| {
+        let texture = symbol_image(name).map(|image| {
+            ui.ctx().load_texture(
+                format!("sf_symbol/{name}"),
+                image,
+                egui::TextureOptions::LINEAR,
+            )
+        });
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(id, texture.clone()));
+        texture
+    });
+    let Some(texture) = texture else { return false };
+    let image_size = texture.size_vec2();
+    let fitted = image_size * (size / image_size.max_elem());
+    ui.painter().image(
+        texture.id(),
+        egui::Rect::from_center_size(origin + egui::Vec2::splat(size * 0.5), fitted),
+        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+        color,
+    );
+    true
+}
+
+fn symbol_image(name: &str) -> Option<egui::ColorImage> {
+    objc2::rc::autoreleasepool(|_| {
+        let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+            &NSString::from_str(name),
+            None,
+        )?;
+        let config = NSImageSymbolConfiguration::configurationWithPointSize_weight(32.0, unsafe {
+            NSFontWeightRegular
+        })
+        .configurationByApplyingConfiguration(
+            &NSImageSymbolConfiguration::configurationWithHierarchicalColor(&NSColor::whiteColor()),
+        );
+        let image = image.imageWithSymbolConfiguration(&config)?;
+        let tiff = image.TIFFRepresentation()?;
+        let bitmap = NSBitmapImageRep::imageRepWithData(&tiff)?;
+        // An empty properties dictionary requests the standard lossless PNG representation.
+        let data = unsafe {
+            bitmap.representationUsingType_properties(
+                NSBitmapImageFileType::PNG,
+                &NSDictionary::new(),
+            )
+        }?;
+        let pixels = image::load_from_memory(&data.to_vec()).ok()?.into_rgba8();
+        Some(egui::ColorImage::from_rgba_unmultiplied(
+            [pixels.width() as usize, pixels.height() as usize],
+            &pixels,
+        ))
+    })
+}
 
 const ABOUT: isize = 1;
 const SETTINGS: isize = 2;

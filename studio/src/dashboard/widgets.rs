@@ -113,7 +113,36 @@ pub(crate) enum Icon {
 }
 
 impl Icon {
+    #[cfg(target_os = "macos")]
+    fn system_symbol(self) -> &'static str {
+        match self {
+            Self::Home => "house",
+            Self::Apps => "square.grid.2x2",
+            Self::Globe | Self::Domain => "globe",
+            Self::Server => "server.rack",
+            Self::Shield => "checkmark.shield",
+            Self::Chart => "chart.xyaxis.line",
+            Self::Deploy => "arrow.triangle.branch",
+            Self::Dollar => "dollarsign.circle",
+            Self::Users => "person.2",
+            Self::Settings => "gearshape",
+            Self::Link => "link",
+            Self::Box => "shippingbox",
+            Self::Refresh => "arrow.clockwise",
+            Self::External => "arrow.up.right",
+            Self::Chevron => "chevron.right",
+            Self::Phone => "iphone",
+            Self::Apple => "apple.logo",
+            Self::Play => "play.fill",
+            Self::Activity => "waveform.path.ecg",
+        }
+    }
+
     pub(crate) fn paint(self, ui: &Ui, origin: Pos2, size: f32, color: Color32) {
+        #[cfg(target_os = "macos")]
+        if crate::macos::paint_symbol(ui, self.system_symbol(), origin, size, color) {
+            return;
+        }
         let p = ui.painter();
         let point = |x: f32, y: f32| origin + vec2(x, y) * (size / 24.0);
         let stroke = Stroke::new((size / 14.0).max(1.1), color);

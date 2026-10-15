@@ -6,6 +6,7 @@ use super::documents::{
 };
 use super::{Action, AppDetails, Document, Palette, Workspace, attr};
 use crate::apple::details::state;
+use crate::style::semibold;
 
 pub(super) fn document(
     ui: &mut Ui,
@@ -283,13 +284,10 @@ fn versions(
                             Layout::top_down(Align::Min),
                             |ui| {
                                 ui.add(
-                                    Label::new(
-                                        RichText::new(format!(
-                                            "iOS {}",
-                                            attr(version, "versionString")
-                                        ))
-                                        .strong(),
-                                    )
+                                    Label::new(semibold(format!(
+                                        "iOS {}",
+                                        attr(version, "versionString")
+                                    )))
                                     .wrap(),
                                 );
                                 ui.add(
@@ -334,7 +332,7 @@ fn planned(ui: &mut Ui, document: Document, palette: Palette) {
     ui.add(Label::new(message).wrap());
     ui.add_space(20.0);
     for (title, description) in document.topics() {
-        ui.label(RichText::new(*title).strong());
+        ui.label(semibold(*title));
         ui.add(Label::new(RichText::new(*description).color(palette.muted)).wrap());
         ui.add_space(12.0);
     }
@@ -359,7 +357,7 @@ fn changes(ui: &mut Ui, workspace: &mut Workspace, details: &AppDetails, palette
         ui.push_id(key, |ui| {
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                let title = ui.label(RichText::new(&edit.label).strong());
+                let title = ui.label(semibold(edit.label.clone()));
                 if ui.button("Revert").labelled_by(title.id).clicked() {
                     revert = Some(key.clone());
                 }
@@ -455,7 +453,7 @@ fn edit_field(
         || attr(resource, field.key).to_owned(),
         |edit| edit.value.clone(),
     );
-    let response = form_row(ui, field.label, palette, 7.0, |ui, label_id| {
+    let response = form_row(ui, field.label, palette, 3.0, |ui, label_id| {
         let edit = if field.rows > 1 {
             TextEdit::multiline(&mut value).desired_rows(field.rows)
         } else {
@@ -464,8 +462,12 @@ fn edit_field(
         let response = ui
             .add(
                 edit.id_salt(&key)
-                    .desired_width(f32::INFINITY)
-                    .margin(vec2(8.0, 7.0))
+                    .desired_width(if field.rows == 1 {
+                        ui.available_width().min(340.0)
+                    } else {
+                        f32::INFINITY
+                    })
+                    .margin(vec2(6.0, 3.0))
                     .hint_text("Not set"),
             )
             .labelled_by(label_id);
@@ -502,12 +504,14 @@ fn edit_field(
             modified: workspace.edits.contains_key(&key),
         });
     }
-    ui.add_space(4.0);
+    if field.rows > 1 {
+        ui.add_space(4.0);
+    }
 }
 
 fn section(ui: &mut Ui, title: &str, palette: Palette) {
-    ui.add(Label::new(RichText::new(title).size(16.0).strong().color(palette.text)).wrap());
-    ui.add_space(12.0);
+    ui.add(Label::new(semibold(title).size(13.0).color(palette.text)).wrap());
+    ui.add_space(8.0);
 }
 
 fn read_row(ui: &mut Ui, label: &str, value: &str, palette: Palette) {
@@ -537,8 +541,8 @@ fn form_row<R>(
     } else {
         ui.horizontal_top(|ui| {
             let label_id = ui
-                .allocate_ui_with_layout(vec2(136.0, 0.0), Layout::top_down(Align::Max), |ui| {
-                    ui.set_width(136.0);
+                .allocate_ui_with_layout(vec2(160.0, 0.0), Layout::top_down(Align::Max), |ui| {
+                    ui.set_width(160.0);
                     if label_top > 0.0 {
                         ui.add_space(label_top);
                     }
