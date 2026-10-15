@@ -1,334 +1,46 @@
 pub(crate) mod api;
 pub(crate) mod details;
+mod settings;
+pub use settings::AppleSettings;
 
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
-    fs,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, TryRecvError},
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
-use reqwest::{StatusCode, Url, blocking::Client};
-
-const APPS_URL: &str = "https://api.appstoreconnect.apple.com/v1/apps?limit=200";
-
 // Credentials deliberately have no Debug implementation.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct AppleCredentials {
-    issuer_id: String,
-    key_id: String,
-    private_key: String,
+    connection_id: String,
+    base_url: String,
+    api_key: String,
+    #[serde(default)]
+    account_id: String,
 }
 
 impl AppleCredentials {
     pub(crate) fn sales_cache_account(&self) -> String {
+        if !self.account_id.is_empty() {
+            return self.account_id.clone();
+        }
         use sha2::{Digest, Sha256};
-        format!("{:x}", Sha256::digest(self.issuer_id.as_bytes()))
+        format!("{:x}", Sha256::digest(self.connection_id.as_bytes()))
     }
 
     #[cfg(test)]
-    pub(crate) fn test_credentials(issuer: &str) -> Self {
+    pub(crate) fn test_credentials(account: &str) -> Self {
         Self {
-            issuer_id: issuer.into(),
-            key_id: "test-key".into(),
-            private_key: "test-private-key".into(),
-        }
-    }
-}
-
-#[derive(Default, Serialize, Deserialize)]
-pub struct AppleSettings {
-    issuer_id: String,
-    key_id: String,
-    private_key: String,
-    filename: String,
-    #[serde(default)]
-    vendor_number: String,
-    #[serde(skip)]
-    feedback: Option<String>,
-    #[serde(skip)]
-    error: bool,
-    #[serde(skip)]
-    changed: bool,
-    #[serde(skip)]
-    saved_credentials: Option<AppleCredentials>,
-    #[serde(skip)]
-    saved_vendor_number: String,
-    #[serde(skip)]
-    api_key_help_texture: Option<(egui::Context, egui::TextureHandle)>,
-    #[serde(skip)]
-    show_api_key_help: bool,
-}
-
-impl AppleSettings {
-    pub fn load() -> Self {
-        let result = (|| {
-            let path = crate::storage::credential_path("apple-credentials.json")?;
-            match fs::read(path) {
-                Ok(bytes) => serde_json::from_slice(&bytes)
-                    .map_err(|_| "Could not load Apple settings.".to_owned()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-                Err(_) => Err("Could not read Apple settings.".to_owned()),
-            }
-        })();
-        let mut settings = result.unwrap_or_else(|error| Self {
-            feedback: Some(error),
-            error: true,
-            ..Self::default()
-        });
-        settings.saved_credentials = settings.current_credentials();
-        settings.saved_vendor_number = settings.vendor_number.trim().to_owned();
-        settings
-    }
-
-    fn current_credentials(&self) -> Option<AppleCredentials> {
-        if self.issuer_id.trim().is_empty()
-            || self.key_id.trim().is_empty()
-            || self.private_key.is_empty()
-        {
-            return None;
-        }
-        Some(AppleCredentials {
-            issuer_id: self.issuer_id.trim().to_owned(),
-            key_id: self.key_id.trim().to_owned(),
-            private_key: self.private_key.clone(),
-        })
-    }
-
-    pub(crate) fn credentials(&self) -> Option<AppleCredentials> {
-        self.saved_credentials.clone()
-    }
-
-    pub(crate) fn saved_vendor_number(&self) -> &str {
-        &self.saved_vendor_number
-    }
-
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("App Store Connect").strong());
-        ui.hyperlink_to(
-            "Get your API key and IDs in App Store Connect",
-            "https://appstoreconnect.apple.com/access/integrations/api",
-        );
-        ui.add(
-            egui::Label::new(
-                "Download a Team Key (.p8), then paste its Issuer ID and Key ID below.",
-            )
-            .wrap(),
-        );
-        self.api_key_help_ui(ui);
-        ui.add_space(8.0);
-        ui.label("Issuer ID");
-        self.changed |= ui
-            .add(
-                egui::TextEdit::singleline(&mut self.issuer_id)
-                    .desired_width(ui.available_width())
-                    .hint_text("Paste Issuer ID"),
-            )
-            .changed();
-        ui.add_space(8.0);
-        ui.label("Key ID");
-        self.changed |= ui
-            .add(
-                egui::TextEdit::singleline(&mut self.key_id)
-                    .desired_width(ui.available_width())
-                    .hint_text("Paste Key ID"),
-            )
-            .changed();
-        ui.add_space(8.0);
-        ui.label("P8 private key");
-        if !self.filename.is_empty() {
-            ui.add(egui::Label::new(&self.filename).wrap());
-        }
-        if ui
-            .add(
-                egui::Button::new(if self.private_key.is_empty() {
-                    "Choose .p8 file…"
-                } else {
-                    "Replace .p8 file…"
-                })
-                .min_size(egui::vec2(140.0, 44.0)),
-            )
-            .clicked()
-            && let Some(path) = rfd::FileDialog::new()
-                .add_filter("Apple private key", &["p8"])
-                .pick_file()
-        {
-            match fs::read_to_string(&path) {
-                Ok(key)
-                    if key.trim().starts_with("-----BEGIN PRIVATE KEY-----")
-                        && key.trim().ends_with("-----END PRIVATE KEY-----") =>
-                {
-                    self.private_key = key;
-                    self.filename = path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned();
-                    self.changed = true;
-                    self.feedback = None;
-                }
-                _ => {
-                    self.feedback = Some(
-                        "Choose a PEM private key (.p8) downloaded from App Store Connect.".into(),
-                    );
-                    self.error = true;
-                }
-            }
-        }
-        ui.add_space(8.0);
-        let vendor_label = ui.label("Vendor number (for sales reports)");
-        self.changed |= ui
-            .add(
-                egui::TextEdit::singleline(&mut self.vendor_number)
-                    .desired_width(ui.available_width())
-                    .hint_text("Enter vendor number"),
-            )
-            .labelled_by(vendor_label.id)
-            .changed();
-        ui.hyperlink_to(
-            "Find your vendor number in App Store Connect",
-            "https://appstoreconnect.apple.com/itc/payments_and_financial_reports",
-        );
-        let vendor_valid = self
-            .vendor_number
-            .trim()
-            .bytes()
-            .all(|byte| byte.is_ascii_digit());
-        if !vendor_valid {
-            ui.colored_label(
-                ui.visuals().error_fg_color,
-                "Vendor number must contain only digits.",
-            );
-        }
-        ui.add_space(8.0);
-        let complete = !self.issuer_id.trim().is_empty()
-            && !self.key_id.trim().is_empty()
-            && !self.private_key.is_empty();
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(
-                    complete && vendor_valid && self.changed,
-                    egui::Button::new("Save Apple settings").min_size(egui::vec2(150.0, 44.0)),
-                )
-                .clicked()
-            {
-                self.issuer_id = self.issuer_id.trim().to_owned();
-                self.key_id = self.key_id.trim().to_owned();
-                self.vendor_number = self.vendor_number.trim().to_owned();
-                let result =
-                    crate::storage::credential_path("apple-credentials.json").and_then(|path| {
-                        let bytes = serde_json::to_vec(self)
-                            .map_err(|_| "Could not encode Apple settings".to_owned())?;
-                        crate::storage::save_credentials(&path, &bytes)
-                    });
-                self.error = result.is_err();
-                self.feedback = Some(match result {
-                    Ok(()) => {
-                        self.changed = false;
-                        self.saved_credentials = self.current_credentials();
-                        self.saved_vendor_number = self.vendor_number.clone();
-                        "Apple settings saved. Connection has not been verified.".into()
-                    }
-                    Err(error) => error,
-                });
-            }
-            if complete && !self.changed {
-                ui.label("Credentials saved locally");
-            }
-        });
-        if let Some(message) = &self.feedback {
-            let color = if self.error {
-                ui.visuals().error_fg_color
-            } else {
-                ui.visuals().text_color()
-            };
-            ui.add(egui::Label::new(egui::RichText::new(message).color(color)).wrap());
-        }
-    }
-
-    fn api_key_help_ui(&mut self, ui: &mut egui::Ui) {
-        if self
-            .api_key_help_texture
-            .as_ref()
-            .is_none_or(|(ctx, _)| ctx != ui.ctx())
-        {
-            if let Ok(image) =
-                image::load_from_memory(include_bytes!("../assets/apple-api-key-help.png"))
-            {
-                let image = image.into_rgba8();
-                self.api_key_help_texture = Some((
-                    ui.ctx().clone(),
-                    ui.ctx().load_texture(
-                        "app-store-connect-api-key-help",
-                        egui::ColorImage::from_rgba_unmultiplied(
-                            [image.width() as usize, image.height() as usize],
-                            &image,
-                        ),
-                        egui::TextureOptions::LINEAR,
-                    ),
-                ));
-            }
-        }
-
-        egui::CollapsingHeader::new("Where to find these values")
-            .id_salt("apple_api_key_help")
-            .show(ui, |ui| {
-                ui.add(
-                    egui::Label::new(
-                        "In App Store Connect, open Users and Access > Integrations > Team Keys. Copy the Issuer ID shown above the key list. Create or select a key for its Key ID, and choose Download API Key to save the .p8 file. Apple only lets you download a private key once.",
-                    )
-                    .wrap(),
-                );
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new("Example only — copy the IDs from your own account.")
-                            .small()
-                            .weak(),
-                    )
-                    .wrap(),
-                );
-                if let Some((_, texture)) = &self.api_key_help_texture {
-                    ui.add_space(4.0);
-                    ui.add(
-                        egui::Image::new(texture)
-                            .max_width(ui.available_width().min(560.0))
-                            .alt_text("App Store Connect Team Keys page with arrows pointing to the Issuer ID, add key button, and Key ID column."),
-                    );
-                    if ui
-                        .add(
-                            egui::Button::new("View full size")
-                                .min_size(egui::vec2(120.0, 44.0)),
-                        )
-                        .clicked()
-                    {
-                        self.show_api_key_help = true;
-                    }
-                }
-            });
-
-        if let Some((_, texture)) = &self.api_key_help_texture {
-            egui::Window::new("App Store Connect Team Keys")
-                .open(&mut self.show_api_key_help)
-                .default_size(egui::vec2(900.0, 500.0))
-                .max_size(
-                    (ui.ctx().content_rect().size() - egui::vec2(32.0, 64.0))
-                        .max(egui::vec2(100.0, 100.0)),
-                )
-                .scroll([true, true])
-                .show(ui.ctx(), |ui| {
-                    ui.add(
-                        egui::Image::new(texture)
-                            .fit_to_original_size(1.0)
-                            .alt_text("App Store Connect Team Keys page with arrows pointing to the Issuer ID, add key button, and Key ID column."),
-                    );
-                });
+            connection_id: account.into(),
+            base_url: format!("https://parsequerade.mainbrella.com/v1/connections/{account}"),
+            api_key: "pq_test-key".into(),
+            account_id: account.into(),
         }
     }
 }
@@ -336,7 +48,7 @@ impl AppleSettings {
 #[derive(Deserialize)]
 struct AppleApp {
     id: String,
-    #[serde(default)]
+    #[serde(flatten)]
     attributes: AppAttributes,
 }
 
@@ -349,18 +61,6 @@ struct AppAttributes {
     bundle_id: String,
     #[serde(default)]
     sku: String,
-}
-
-#[derive(Deserialize)]
-struct AppPage {
-    data: Vec<AppleApp>,
-    #[serde(default)]
-    links: PageLinks,
-}
-
-#[derive(Default, Deserialize)]
-struct PageLinks {
-    next: Option<String>,
 }
 
 struct AppJob {
@@ -548,7 +248,7 @@ impl AppleStore {
         if self.credentials.is_none() {
             ui.add(
                 egui::Label::new(
-                    "Add your Issuer ID, Key ID, and .p8 key in Apple settings to load apps.",
+                    "Connect your Apple key through Parsequerade in Apple settings to load apps.",
                 )
                 .wrap(),
             );
@@ -617,7 +317,7 @@ impl AppleStore {
         }
         ui.add_space(8.0);
         if self.loaded && self.job.is_none() && self.error.is_none() && self.apps.is_empty() {
-            ui.label("No apps are accessible to this Apple API key.");
+            ui.label("No apps are accessible to this Parsequerade connection.");
         } else {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
@@ -687,17 +387,8 @@ impl AppleStore {
         let cancellation = cancelled.clone();
         self.job = Some(AppJob { result, cancelled });
         thread::spawn(move || {
-            let result = (|| {
-                let http = Client::builder()
-                    .https_only(true)
-                    .redirect(reqwest::redirect::Policy::none())
-                    .connect_timeout(Duration::from_secs(10))
-                    .timeout(Duration::from_secs(30))
-                    .build()
-                    .map_err(|_| "Could not initialize the Apple connection.".to_owned())?;
-                let token = generate_token(&credentials)?;
-                list_apps(&http, &token, &cancellation, APPS_URL)
-            })();
+            let result = api::ParsequeradeApi::new(credentials)
+                .and_then(|mut api| list_apps(&mut api, &cancellation));
             if !cancellation.load(Ordering::Relaxed) {
                 let _ = sender.send(result);
                 ctx.request_repaint();
@@ -706,88 +397,20 @@ impl AppleStore {
     }
 }
 
-#[derive(Serialize)]
-struct Claims<'a> {
-    iss: &'a str,
-    iat: u64,
-    exp: u64,
-    aud: &'static str,
-}
-
-pub(crate) fn generate_token(credentials: &AppleCredentials) -> Result<String, String> {
-    let key = EncodingKey::from_ec_pem(credentials.private_key.as_bytes())
-        .map_err(|_| "The saved .p8 key is invalid. Replace it in Apple settings.".to_owned())?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| "Check your system clock before connecting to Apple.".to_owned())?
-        .as_secs();
-    let mut header = Header::new(Algorithm::ES256);
-    header.kid = Some(credentials.key_id.clone());
-    encode(
-        &header,
-        &Claims {
-            iss: &credentials.issuer_id,
-            iat: now,
-            exp: now + 20 * 60,
-            aud: "appstoreconnect-v1",
-        },
-        &key,
-    )
-    .map_err(|_| "Could not sign the Apple request. Check your .p8 key in Apple settings.".into())
-}
-
-fn list_apps(
-    http: &Client,
-    token: &str,
+fn list_apps<T: api::Transport>(
+    transport: &mut T,
     cancelled: &AtomicBool,
-    endpoint: &str,
 ) -> Result<Vec<AppleApp>, String> {
-    let endpoint = Url::parse(endpoint).map_err(|_| "Invalid Apple app list URL.".to_owned())?;
-    let mut next = Some(endpoint.clone());
-    let mut pages = HashSet::new();
-    let mut apps = Vec::new();
-    while let Some(url) = next {
-        if cancelled.load(Ordering::Relaxed) {
-            return Err("Apple app loading cancelled.".into());
-        }
-        // Follow Apple's pagination URLs, but never forward the bearer token to another origin.
-        if url.origin() != endpoint.origin()
-            || url.path() != endpoint.path()
-            || !url.username().is_empty()
-            || url.password().is_some()
-        {
-            return Err("Apple returned an unexpected app list URL. Please refresh again.".into());
-        }
-        if !pages.insert(url.as_str().to_owned()) {
-            return Err("Apple returned a repeated page of apps. Please refresh again.".into());
-        }
-        let response = http
-            .get(url)
-            .bearer_auth(token)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .send()
-            .map_err(|_| {
-                "Could not reach App Store Connect. Check your connection and refresh again."
-                    .to_owned()
-            })?;
-        if !response.status().is_success() {
-            return Err(api_error(response.status()));
-        }
-        let page: AppPage = response
-            .json()
-            .map_err(|_| "Apple returned an invalid app list. Please refresh again.".to_owned())?;
-        apps.extend(page.data);
-        next = page
-            .links
-            .next
-            .filter(|url| !url.is_empty())
-            .map(|url| {
-                endpoint
-                    .join(&url)
-                    .map_err(|_| "Apple returned an invalid pagination URL.".to_owned())
-            })
-            .transpose()?;
-    }
+    let values = api::list(transport, "/apps?limit=200", cancelled)?;
+    let mut apps: Vec<AppleApp> = values
+        .into_iter()
+        .map(|value| {
+            serde_json::from_value(value)
+                .map_err(|_| "Parsequerade returned an invalid app list.".to_owned())
+        })
+        .collect::<Result<_, _>>()?;
+    let mut ids = HashSet::new();
+    apps.retain(|app| ids.insert(app.id.clone()));
     apps.sort_by_cached_key(|app| {
         (
             app.attributes.name.to_lowercase(),
@@ -795,16 +418,5 @@ fn list_apps(
             app.id.clone(),
         )
     });
-    let mut ids = HashSet::new();
-    apps.retain(|app| ids.insert(app.id.clone()));
     Ok(apps)
-}
-
-fn api_error(status: StatusCode) -> String {
-    match status {
-        StatusCode::UNAUTHORIZED => "Apple could not verify your API key. Check the Issuer ID, Key ID, .p8 key, and system clock in Settings.",
-        StatusCode::FORBIDDEN => "Apple denied access. Check that this API key has permission to view your apps in App Store Connect.",
-        StatusCode::TOO_MANY_REQUESTS => "Apple is receiving too many requests. Wait a moment and refresh again.",
-        _ => "App Store Connect could not load your apps. Please refresh again.",
-    }.to_owned()
 }

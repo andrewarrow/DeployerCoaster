@@ -138,6 +138,7 @@ impl App {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         ctx.set_theme(self.preferences.appearance.theme());
+        self.apple.poll(&ctx);
         #[cfg(not(target_os = "macos"))]
         if self.pending_action.is_none() {
             self.keyboard_shortcuts(&ctx);
@@ -159,6 +160,7 @@ impl App {
         self.poll_codex(ui.ctx());
         self.dynadot.poll();
         self.play_store.poll();
+        self.apple.poll(ui.ctx());
         self.apple_store.set_credentials(self.apple.credentials());
         self.apple_store
             .set_reporting_vendor(self.apple.saved_vendor_number());
@@ -373,6 +375,7 @@ impl App {
 
     pub fn app_window_ui(&mut self, window: AppWindow, ui: &mut egui::Ui) -> AppWindowAction {
         self.poll_codex(ui.ctx());
+        self.apple.poll(ui.ctx());
         ui.ctx().set_theme(self.preferences.appearance.theme());
         if window == AppWindow::Settings {
             self.store_settings(ui);

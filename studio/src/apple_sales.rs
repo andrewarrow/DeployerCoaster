@@ -118,14 +118,7 @@ impl SalesReports {
             cancelled,
         });
         thread::spawn(move || {
-            let result = api::load_report(
-                &credentials,
-                &vendor,
-                frequency,
-                date,
-                refresh,
-                &cancellation,
-            );
+            let result = api::load_report(&credentials, &vendor, frequency, date, refresh);
             if !cancellation.load(Ordering::Relaxed) {
                 let _ = sender.send(result);
                 context.request_repaint();
@@ -145,11 +138,21 @@ impl SalesReports {
         ui.set_max_width(ui.available_width().min(960.0));
         ui.heading("App Store sales");
         ui.add_space(8.0);
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(
+                    "Live sales reports are unavailable because Parsequerade does not support sales yet.",
+                )
+                .small()
+                .weak(),
+            )
+            .wrap(),
+        );
         if self.credentials.is_none() || self.vendor.is_empty() {
             ui.add(egui::Label::new(if self.credentials.is_none() {
-                "Add your App Store Connect API key and vendor number in Apple settings to load sales reports."
+                "Connect Parsequerade and add your vendor number in Apple settings to view saved sales reports."
             } else {
-                "Add your vendor number in Apple settings to load sales reports."
+                "Add your vendor number in Apple settings to view saved sales reports."
             }).wrap());
             ui.add_space(8.0);
             return ui
@@ -172,20 +175,13 @@ impl SalesReports {
                     self.select_period(frequency, frequency.latest(today()));
                 }
             }
-            if ui
-                .add_enabled(
-                    self.job.is_none(),
-                    egui::Button::new(if self.error.is_some() {
-                        "Retry"
-                    } else {
-                        "Refresh"
-                    })
-                    .min_size(egui::vec2(72.0, 44.0)),
-                )
-                .clicked()
-            {
-                self.start(ui.ctx(), true);
-            }
+            ui.add_enabled(
+                false,
+                egui::Button::new("Refresh").min_size(egui::vec2(72.0, 44.0)),
+            )
+            .on_disabled_hover_text(
+                "Live sales reports are unavailable because Parsequerade does not support sales yet.",
+            );
             settings = ui
                 .add(
                     egui::Button::new(if compact {
@@ -233,9 +229,9 @@ impl SalesReports {
             ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label(if self.report.is_some() {
-                    "Refreshing sales report…"
+                    "Refreshing saved report…"
                 } else {
-                    "Loading sales report…"
+                    "Loading saved report…"
                 });
             });
         }
@@ -253,7 +249,7 @@ impl SalesReports {
         }
         if report.cached {
             ui.label(
-                egui::RichText::new("Saved report · Refresh to check for revisions")
+                egui::RichText::new("Saved report · Live refresh unavailable")
                     .small()
                     .weak(),
             );

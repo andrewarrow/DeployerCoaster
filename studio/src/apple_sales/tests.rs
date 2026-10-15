@@ -90,8 +90,12 @@ fn report_states_and_expanded_details_fit_supported_sizes_in_both_themes() {
                         });
                     });
                     assert!(text_in(&output, "App Store sales"));
+                    assert!(text_in(
+                        &output,
+                        "Live sales reports are unavailable because Parsequerade does not support sales yet."
+                    ));
                     match state {
-                        "loading" => assert!(text_in(&output, "Loading sales report…")),
+                        "loading" => assert!(text_in(&output, "Loading saved report…")),
                         "empty" => assert!(text_in(&output, "No sales reported for this period.")),
                         "loaded" => {
                             assert!(text_in(&output, "15 downloads · 2 updates · 0 redownloads"))
@@ -226,4 +230,19 @@ fn failed_refresh_keeps_the_current_report_and_currency_amounts_remain_separate(
         format_proceeds(&BTreeMap::from([("USD".into(), -109), ("CAD".into(), 225)])),
         "CAD 2.25 · USD −1.09"
     );
+}
+
+#[test]
+fn live_refresh_is_disabled_while_saved_reports_remain_visible() {
+    let mut sales = loaded_sales();
+    let ctx = egui::Context::default();
+    let mut icons = AppIcons::default();
+    let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        sales.ui(ui, None, &[], &mut icons);
+    });
+    assert!(text_in(&output, "Saved report · Live refresh unavailable"));
+    assert!(text_in(
+        &output,
+        "Live sales reports are unavailable because Parsequerade does not support sales yet."
+    ));
 }

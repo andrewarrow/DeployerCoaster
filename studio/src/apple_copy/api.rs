@@ -3,11 +3,29 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use reqwest::Method;
+use reqwest::{Method, Url};
 use serde_json::{Value, json};
 
 use super::{Event, StepState};
-use crate::apple::api::{Transport, checked_url, id, validate_id};
+use crate::apple::api::{Transport, id, validate_id};
+
+const LEGACY_API_BASE: &str = "https://api.appstoreconnect.apple.com";
+
+fn checked_url(path: &str) -> Result<Url, String> {
+    let base = Url::parse(LEGACY_API_BASE).unwrap();
+    let url = base
+        .join(path)
+        .map_err(|_| "Apple returned an invalid URL.".to_owned())?;
+    if url.origin() != base.origin()
+        || !url.path().starts_with("/v1/")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("Apple returned an unexpected URL.".into());
+    }
+    Ok(url)
+}
 
 const CONTACT: &[&str] = &[
     "contactFirstName",

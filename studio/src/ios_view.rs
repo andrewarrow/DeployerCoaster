@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::apple::{
     AppleCredentials,
-    api::AppleApi,
+    api::ParsequeradeApi,
     details::{self, AppDetails, attr, state},
 };
 use crate::dashboard::Icon;
@@ -100,8 +100,8 @@ impl IosView {
         let app_id = app_id.to_owned();
         let ctx = ctx.clone();
         thread::spawn(move || {
-            let result =
-                AppleApi::new(credentials).and_then(|api| details::load(api, &app_id, &cancelled));
+            let result = ParsequeradeApi::new(credentials)
+                .and_then(|api| details::load(api, &app_id, &cancelled));
             if !cancelled.load(Ordering::Relaxed) {
                 let _ = sender.send(result);
                 ctx.request_repaint();
@@ -326,12 +326,10 @@ fn app_information(ui: &mut Ui, details: &AppDetails) {
     if let Some(info) = &details.info {
         row(ui, "Status", &readable(state(info)));
         for (label, field) in [
-            ("Primary category", "primaryCategory"),
-            ("Secondary category", "secondaryCategory"),
+            ("Primary category", "primaryCategoryId"),
+            ("Secondary category", "secondaryCategoryId"),
         ] {
-            let category = info["relationships"][field]["data"]["id"]
-                .as_str()
-                .unwrap_or_default();
+            let category = info[field].as_str().unwrap_or_default();
             row(ui, label, &readable(category));
         }
     }

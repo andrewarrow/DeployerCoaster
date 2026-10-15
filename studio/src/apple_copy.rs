@@ -1,20 +1,19 @@
+#[cfg(test)]
 mod api;
 #[cfg(test)]
 mod tests;
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, TryRecvError},
-    },
-    thread,
+#[cfg(test)]
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+    mpsc::{self, Receiver, TryRecvError},
 };
 
-use crate::apple::api::AppleApi;
+#[cfg(test)]
 use crate::{apple::AppleCredentials, dashboard::StoreApp};
-use api::{Session, Snapshot};
-
+#[cfg(test)]
+#[cfg(test)]
 #[derive(Clone)]
 enum StepState {
     Pending,
@@ -24,12 +23,38 @@ enum StepState {
     Skipped,
 }
 
+#[cfg(not(test))]
+#[derive(Default)]
+pub(crate) struct AppCopy;
+
+#[cfg(not(test))]
+impl AppCopy {
+    pub(crate) fn context_menu(
+        &mut self,
+        response: &egui::Response,
+        _app: Option<&crate::dashboard::StoreApp>,
+        _credentials: Option<&crate::apple::AppleCredentials>,
+    ) {
+        response.context_menu(|ui| {
+            let reason = "Copy and paste are unavailable because Parsequerade is read-only.";
+            ui.add_enabled(false, egui::Button::new("Copy App"))
+                .on_disabled_hover_text(reason);
+            ui.add_enabled(false, egui::Button::new("Paste"))
+                .on_disabled_hover_text(reason);
+        });
+    }
+
+    pub(crate) fn ui(&mut self, _ctx: &egui::Context) {}
+}
+
+#[cfg(test)]
 struct Step {
     label: String,
     request: String,
     state: StepState,
 }
 
+#[cfg(test)]
 enum Event {
     Step {
         label: String,
@@ -37,26 +62,24 @@ enum Event {
         state: StepState,
     },
     Status(usize, StepState),
-    Copied(Box<Snapshot>),
     Done(Result<(), String>),
 }
 
+#[cfg(test)]
 struct Job {
     receiver: Receiver<Event>,
     cancelled: Arc<AtomicBool>,
 }
 
+#[cfg(test)]
 impl Drop for Job {
     fn drop(&mut self) {
         self.cancelled.store(true, Ordering::Relaxed);
     }
 }
 
-struct CopiedApp {
-    app: StoreApp,
-    snapshot: Snapshot,
-}
-
+#[cfg(test)]
+#[cfg(test)]
 struct Progress {
     context: egui::Context,
     source: StoreApp,
@@ -65,119 +88,40 @@ struct Progress {
     outcome: Option<Result<(), String>>,
 }
 
+#[cfg(test)]
 #[derive(Default)]
 pub(crate) struct AppCopy {
-    copied: Option<CopiedApp>,
     job: Option<Job>,
     progress: Option<Progress>,
 }
 
+#[cfg(test)]
 impl AppCopy {
     pub(crate) fn context_menu(
         &mut self,
         response: &egui::Response,
-        app: Option<&StoreApp>,
-        credentials: Option<&AppleCredentials>,
+        _app: Option<&StoreApp>,
+        _credentials: Option<&AppleCredentials>,
     ) {
         response.context_menu(|ui| {
-            let enabled = app.is_some() && credentials.is_some() && self.job.is_none();
-            if ui
-                .add_enabled(enabled, egui::Button::new("Copy App"))
-                .clicked()
-            {
-                let app = app.unwrap().clone();
-                ui.ctx().copy_text(app.store_id.clone());
-                self.start(app, None, credentials.unwrap().clone(), ui.ctx());
-                ui.close();
-            }
-            let paste_reason = if app.is_none() {
-                "Copy and paste settings is available for App Store Connect apps.".to_owned()
-            } else if credentials.is_none() {
-                "Connect an Apple account in Settings first.".into()
-            } else if self.job.is_some() {
-                "Wait for the current operation to finish.".into()
-            } else if let Some(copied) = &self.copied {
-                if Some(&copied.app.store_id) == app.map(|a| &a.store_id) {
-                    "Choose a different destination app.".into()
-                } else {
-                    String::new()
-                }
-            } else {
-                "Copy an app first.".into()
-            };
-            let paste = ui.add_enabled(paste_reason.is_empty(), egui::Button::new("Paste"));
-            if paste_reason.is_empty() {
-                let source = &self.copied.as_ref().unwrap().app;
-                if paste
-                    .on_hover_text(format!("Copy settings from {} to this app", source.name))
-                    .clicked()
-                {
-                    self.start(
-                        source.clone(),
-                        app.cloned(),
-                        credentials.unwrap().clone(),
-                        ui.ctx(),
-                    );
-                    ui.close();
-                }
-            } else {
-                paste.on_disabled_hover_text(paste_reason);
-            }
+            let reason = "Copy and paste are unavailable because Parsequerade is read-only.";
+            ui.add_enabled(false, egui::Button::new("Copy App"))
+                .on_disabled_hover_text(reason);
+            ui.add_enabled(false, egui::Button::new("Paste"))
+                .on_disabled_hover_text(reason);
         });
     }
 
+    #[allow(dead_code)]
     fn start(
         &mut self,
-        source: StoreApp,
-        target: Option<StoreApp>,
-        credentials: AppleCredentials,
-        ctx: &egui::Context,
+        _source: StoreApp,
+        _target: Option<StoreApp>,
+        _credentials: AppleCredentials,
+        _ctx: &egui::Context,
     ) {
-        if self.job.is_some() {
-            return;
-        }
-        let snapshot = if target.is_some() {
-            self.copied.as_ref().map(|c| c.snapshot.clone())
-        } else {
-            // Failed copies must not leave an older app available as the paste source.
-            self.copied = None;
-            None
-        };
-        let (sender, receiver) = mpsc::channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        self.job = Some(Job {
-            receiver,
-            cancelled: cancelled.clone(),
-        });
-        self.progress = Some(Progress {
-            context: ctx.clone(),
-            source: source.clone(),
-            target: target.clone(),
-            steps: Vec::new(),
-            outcome: None,
-        });
-        let ctx = ctx.clone();
-        thread::spawn(move || {
-            let mut emit = |event| {
-                let _ = sender.send(event);
-                ctx.request_repaint();
-            };
-            let result = (|| {
-                let api = AppleApi::new(credentials)?;
-                let mut session = Session::new(api, &cancelled, &mut emit);
-                if let Some(target) = target {
-                    let source = snapshot.ok_or_else(|| "Copy an app first.".to_owned())?;
-                    let destination = session.load(&target.store_id, true)?;
-                    let plan = api::plan(&source, &destination)?;
-                    session.apply(plan)
-                } else {
-                    let snapshot = session.load(&source.store_id, false)?;
-                    (session.emit)(Event::Copied(Box::new(snapshot)));
-                    Ok(())
-                }
-            })();
-            emit(Event::Done(result));
-        });
+        // Keep this second guard even if another caller is added later: copy/paste
+        // currently depends on Apple write routes that Parsequerade does not expose.
     }
 
     fn poll(&mut self) {
@@ -208,12 +152,6 @@ impl AppCopy {
                     if let Some(step) = progress.steps.get_mut(index) {
                         step.state = state;
                     }
-                }
-                Event::Copied(snapshot) => {
-                    self.copied = Some(CopiedApp {
-                        app: progress.source.clone(),
-                        snapshot: *snapshot,
-                    });
                 }
                 Event::Done(result) => {
                     progress.outcome = Some(result);

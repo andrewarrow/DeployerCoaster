@@ -8,12 +8,6 @@ pub(super) enum Frequency {
 }
 
 impl Frequency {
-    pub(super) fn api_value(self) -> &'static str {
-        match self {
-            Self::Daily => "DAILY",
-            Self::Monthly => "MONTHLY",
-        }
-    }
     pub(super) fn label(self) -> &'static str {
         match self {
             Self::Daily => "Daily",

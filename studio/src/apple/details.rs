@@ -1,12 +1,9 @@
-use std::{
-    collections::HashSet,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use reqwest::Method;
 use serde_json::Value;
 
-use super::api::{Transport, checked_url, id, validate_id};
+use super::api::{self, Transport, id, validate_id};
 
 #[cfg(test)]
 mod tests;
@@ -22,7 +19,7 @@ pub(crate) struct AppDetails {
 }
 
 pub(crate) fn attr<'a>(resource: &'a Value, field: &str) -> &'a str {
-    resource["attributes"][field].as_str().unwrap_or_default()
+    resource[field].as_str().unwrap_or_default()
 }
 
 pub(crate) fn state(resource: &Value) -> &str {
@@ -34,7 +31,7 @@ pub(crate) fn state(resource: &Value) -> &str {
 }
 
 fn preferred(resources: &[Value]) -> Option<&Value> {
-    // Match Copy App: prefer editable metadata, then the live listing, then other states.
+    // Prefer editable metadata, then the live listing, then other states.
     resources.iter().min_by_key(|resource| {
         let priority = match state(resource) {
             "PREPARE_FOR_SUBMISSION" => 0,
@@ -69,45 +66,15 @@ impl<T: Transport> Reader<'_, T> {
         if self.cancelled.load(Ordering::Relaxed) {
             return Err("App detail loading cancelled.".into());
         }
-        checked_url(path)?;
         let (status, value) = self.transport.send(Method::GET, path, None)?;
         if !(200..300).contains(&status) {
-            return Err(match status {
-                401 => "Apple could not verify your API key. Check your Apple settings and system clock.".into(),
-                403 => "Apple denied access. Check your API key's permissions in App Store Connect.".into(),
-                404 => "This information is unavailable in App Store Connect.".into(),
-                429 => "Apple is receiving too many requests. Wait a moment and refresh.".into(),
-                _ => format!("App Store Connect could not load this information (HTTP {status}). Try again."),
-            });
+            return Err(api::api_error(status, &value));
         }
         Ok(value)
     }
 
     fn list(&mut self, path: &str) -> Result<Vec<Value>, String> {
-        let original = checked_url(path)?;
-        let mut next = Some(path.to_owned());
-        let mut pages = HashSet::new();
-        let mut resources = Vec::new();
-        while let Some(path) = next {
-            let url = checked_url(&path)?;
-            if url.path() != original.path() || !pages.insert(url.to_string()) {
-                return Err("Apple returned an unexpected or repeated page.".into());
-            }
-            let value = self.get(&path)?;
-            let data = value["data"]
-                .as_array()
-                .ok_or_else(|| "Apple returned an invalid list.".to_owned())?;
-            for resource in data {
-                id(resource)?;
-            }
-            resources.extend(data.iter().cloned());
-            next = value
-                .pointer("/links/next")
-                .and_then(Value::as_str)
-                .filter(|path| !path.is_empty())
-                .map(str::to_owned);
-        }
-        Ok(resources)
+        api::list(&mut self.transport, path, self.cancelled)
     }
 }
 
@@ -121,22 +88,22 @@ pub(crate) fn load<T: Transport>(
         transport,
         cancelled,
     };
-    let response = reader.get(&format!("/v1/apps/{app_id}"))?;
-    let app = response["data"].clone();
+    let response = reader.get(&format!("/apps/{app_id}"))?;
+    let app = response;
     if !app.is_object() || id(&app)? != app_id {
-        return Err("Apple returned invalid app details.".into());
+        return Err("Parsequerade returned invalid app details.".into());
     }
     let mut details = AppDetails {
         app,
         ..Default::default()
     };
-    match reader.list(&format!("/v1/apps/{app_id}/appInfos?limit=200")) {
+    match reader.list(&format!("/apps/{app_id}/app-infos?limit=200")) {
         Ok(infos) => {
             details.info = preferred(&infos).cloned();
             if let Some(info) = &details.info {
                 let info_id = id(info)?;
                 match reader.list(&format!(
-                    "/v1/appInfos/{info_id}/appInfoLocalizations?limit=200"
+                    "/apps/{app_id}/app-infos/{info_id}/localizations?limit=200"
                 )) {
                     Ok(localizations) => details.info_localizations = english(localizations),
                     Err(error) => details.warnings.push(format!("App localizations: {error}")),
@@ -145,9 +112,7 @@ pub(crate) fn load<T: Transport>(
         }
         Err(error) => details.warnings.push(format!("App information: {error}")),
     }
-    match reader.list(&format!(
-        "/v1/apps/{app_id}/appStoreVersions?filter[platform]=IOS&limit=200"
-    )) {
+    match reader.list(&format!("/apps/{app_id}/versions?platform=IOS&limit=200")) {
         Ok(versions) => {
             let versions: Vec<_> = versions
                 .into_iter()
@@ -157,7 +122,7 @@ pub(crate) fn load<T: Transport>(
             if let Some(version) = &details.version {
                 let version_id = id(version)?;
                 match reader.list(&format!(
-                    "/v1/appStoreVersions/{version_id}/appStoreVersionLocalizations?limit=200"
+                    "/apps/{app_id}/versions/{version_id}/localizations?limit=200"
                 )) {
                     Ok(localizations) => details.version_localizations = english(localizations),
                     Err(error) => details

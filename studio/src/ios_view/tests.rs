@@ -4,18 +4,16 @@ use serde_json::json;
 
 fn fixture() -> AppDetails {
     AppDetails {
-        app: json!({"id": "123", "attributes": {"bundleId": "com.example.this.is.a.deliberately.long.bundle.identifier.with.several.segments.to.check.wrapping.behavior", "sku": "example", "primaryLocale": "en-US"}}),
-        info: Some(
-            json!({"attributes": {"state": "PREPARE_FOR_SUBMISSION"}, "relationships": {"primaryCategory": {"data": {"id": "UTILITIES"}}}}),
-        ),
+        app: json!({"id": "123", "bundleId": "com.example.this.is.a.deliberately.long.bundle.identifier.with.several.segments.to.check.wrapping.behavior", "sku": "example", "primaryLocale": "en-US"}),
+        info: Some(json!({"state": "PREPARE_FOR_SUBMISSION", "primaryCategoryId": "UTILITIES"})),
         version: Some(
-            json!({"attributes": {"versionString": "2.0", "appVersionState": "PREPARE_FOR_SUBMISSION", "copyright": "2026 Example", "createdDate": "2026-10-13T12:00:00Z"}}),
+            json!({"versionString": "2.0", "appVersionState": "PREPARE_FOR_SUBMISSION", "copyright": "2026 Example", "createdDate": "2026-10-13T12:00:00Z"}),
         ),
         info_localizations: vec![
-            json!({"attributes": {"locale": "en-US", "name": "A long localized application name with several words", "subtitle": "An English subtitle", "privacyPolicyUrl": "https://example.com/a/very/long/privacy/policy/address/with/a/path/that/keeps/going/and/going/without/a/short/word-break"}}),
+            json!({"locale": "en-US", "name": "A long localized application name with several words", "subtitle": "An English subtitle", "privacyPolicyUrl": "https://example.com/a/very/long/privacy/policy/address/with/a/path/that/keeps/going/and/going/without/a/short/word-break"}),
         ],
         version_localizations: vec![
-            json!({"attributes": {"locale": "en-US", "description": "An English description with multiple paragraphs.\n\nThis is another paragraph with enough words to exercise wrapping in narrow windows.", "keywords": "example,app,test", "promotionalText": "Try our latest features", "whatsNew": "New features", "supportUrl": "https://example.com/support"}}),
+            json!({"locale": "en-US", "description": "An English description with multiple paragraphs.\n\nThis is another paragraph with enough words to exercise wrapping in narrow windows.", "keywords": "example,app,test", "promotionalText": "Try our latest features", "whatsNew": "New features", "supportUrl": "https://example.com/support"}),
         ],
         ..Default::default()
     }
@@ -88,7 +86,7 @@ fn failed_refresh_preserves_details_and_success_replaces_them() {
         cancelled: Arc::new(AtomicBool::new(false)),
     });
     let mut new_details = fixture();
-    new_details.app["attributes"]["sku"] = json!("updated");
+    new_details.app["sku"] = json!("updated");
     sender.send(Ok(new_details)).unwrap();
     view.poll();
     assert!(view.cache["123"].error.is_none());
