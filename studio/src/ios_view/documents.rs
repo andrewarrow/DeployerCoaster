@@ -190,7 +190,12 @@ impl Document {
     pub(super) fn connected(self) -> bool {
         matches!(
             self,
-            Self::Information | Self::Listing | Self::Versions | Self::Privacy | Self::Changes
+            Self::Information
+                | Self::Listing
+                | Self::Versions
+                | Self::Privacy
+                | Self::AgeRating
+                | Self::Changes
         )
     }
 

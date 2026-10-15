@@ -577,6 +577,7 @@ fn inspector_contents(
             Document::Information => "App",
             Document::Listing => "Version localization",
             Document::Privacy => "App metadata",
+            Document::AgeRating => "Age rating declaration",
             Document::Versions => "Version collection",
             Document::Changes => "Session draft",
             _ => "Planned resource",

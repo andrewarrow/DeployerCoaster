@@ -12,6 +12,7 @@ mod tests;
 pub(crate) struct AppDetails {
     pub app: Value,
     pub info: Option<Value>,
+    pub age_rating: Option<Value>,
     pub version: Option<Value>,
     pub versions: Vec<Value>,
     pub info_localizations: Vec<Value>,
@@ -122,6 +123,28 @@ pub(crate) fn load_for_version<T: Transport>(
                         details.info_localizations = sort_localizations(localizations)
                     }
                     Err(error) => details.warnings.push(format!("App localizations: {error}")),
+                }
+                match reader.get(&format!("/apps/{app_id}/app-infos/{info_id}/age-rating")) {
+                    Ok(age_rating) => {
+                        let valid = age_rating.is_object()
+                            && id(&age_rating).is_ok()
+                            && [("appId", app_id), ("appInfoId", info_id)].into_iter().all(
+                                |(field, expected)| match age_rating.get(field) {
+                                    None | Some(Value::Null) => true,
+                                    Some(Value::String(owner)) => owner == expected,
+                                    Some(_) => false,
+                                },
+                            );
+                        if valid {
+                            details.age_rating = Some(age_rating);
+                        } else {
+                            details.warnings.push(
+                                "Age rating: Parsequerade returned invalid age rating details."
+                                    .into(),
+                            );
+                        }
+                    }
+                    Err(error) => details.warnings.push(format!("Age rating: {error}")),
                 }
             }
         }

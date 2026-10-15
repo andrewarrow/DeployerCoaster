@@ -22,6 +22,40 @@ fn preview_details() -> AppDetails {
             "primaryCategoryId": "PRODUCTIVITY",
             "secondaryCategoryId": "LIFESTYLE"
         })),
+        age_rating: Some(json!({
+            "id": "rating-24",
+            "appId": APP_ID,
+            "appInfoId": "info-draft",
+            "advertising": false,
+            "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+            "contests": "NONE",
+            "gambling": false,
+            "gamblingSimulated": "NONE",
+            "gunsOrOtherWeapons": "NONE",
+            "healthOrWellnessTopics": true,
+            "kidsAgeBand": "NINE_TO_ELEVEN",
+            "lootBox": false,
+            "medicalOrTreatmentInformation": "NONE",
+            "messagingAndChat": true,
+            "parentalControls": false,
+            "profanityOrCrudeHumor": "INFREQUENT_OR_MILD",
+            "ageAssurance": false,
+            "sexualContentGraphicAndNudity": "NONE",
+            "sexualContentOrNudity": "NONE",
+            "socialMedia": false,
+            "socialMediaAgeRestricted": false,
+            "horrorOrFearThemes": "NONE",
+            "matureOrSuggestiveThemes": "INFREQUENT_OR_MILD",
+            "unrestrictedWebAccess": false,
+            "userGeneratedContent": true,
+            "violenceCartoonOrFantasy": "NONE",
+            "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+            "violenceRealistic": "NONE",
+            "ageRatingOverrideV2": "THIRTEEN_PLUS",
+            "koreaAgeRatingOverride": "ALL",
+            "gracRatingClassificationNumber": "GRAC-0000-0000",
+            "developerAgeRatingInfoUrl": "https://fieldnotes.app/legal/age-rating-information"
+        })),
         version: Some(json!({
             "id": "release-24",
             "platform": "IOS",
@@ -197,6 +231,7 @@ fn render_ios_workspace_previews() {
         for (document, widths) in [
             (Document::Information, &[390, 768, 1280, 1440][..]),
             (Document::Listing, &[390, 768, 1280, 1440][..]),
+            (Document::AgeRating, &[390, 768, 1280, 1440][..]),
         ] {
             for &width in widths {
                 let height = if width == 390 {
@@ -274,6 +309,7 @@ fn render_ios_workspace_previews() {
                 let document_name = match document {
                     Document::Information => "information",
                     Document::Listing => "listing",
+                    Document::AgeRating => "age-rating",
                     _ => unreachable!(),
                 };
                 let path = output_dir.join(format!(

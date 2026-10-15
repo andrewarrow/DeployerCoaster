@@ -67,6 +67,17 @@ fn loads_main_fields_and_all_locales_from_preferred_ios_version() {
         resource("info-gb", json!({"locale": "en-GB", "subtitle": "British subtitle"})),
         resource("info-us", json!({"locale": "en-US", "name": "English name", "subtitle": "English subtitle", "privacyPolicyUrl": "https://example.com/privacy"}))
     ]));
+    fake.response(
+        "/apps/123/app-infos/draft-info/age-rating",
+        json!({
+            "id": "rating-draft",
+            "appId": "123",
+            "appInfoId": "draft-info",
+            "advertising": false,
+            "gambling": true,
+            "kidsAgeBand": "SIX_TO_EIGHT"
+        }),
+    );
     fake.response("/apps/123/versions?platform=IOS&limit=200", json!([
         resource("mac", json!({"platform": "MAC_OS", "appVersionState": "PREPARE_FOR_SUBMISSION", "createdDate": "2026-10-01"})),
         resource("live", json!({"platform": "IOS", "appVersionState": "READY_FOR_DISTRIBUTION"})),
@@ -82,6 +93,13 @@ fn loads_main_fields_and_all_locales_from_preferred_ios_version() {
     assert_eq!(attr(&details.app, "sku"), "example");
     assert_eq!(attr(&details.app, "primaryLocale"), "fr-FR");
     assert_eq!(details.info.as_ref().unwrap()["id"], "draft-info");
+    assert_eq!(details.age_rating.as_ref().unwrap()["id"], "rating-draft");
+    assert_eq!(details.age_rating.as_ref().unwrap()["advertising"], false);
+    assert_eq!(details.age_rating.as_ref().unwrap()["gambling"], true);
+    assert_eq!(
+        details.age_rating.as_ref().unwrap()["kidsAgeBand"],
+        "SIX_TO_EIGHT"
+    );
     assert_eq!(details.version.as_ref().unwrap()["id"], "draft-new");
     assert_eq!(
         attr(details.version.as_ref().unwrap(), "versionString"),
@@ -111,6 +129,37 @@ fn loads_main_fields_and_all_locales_from_preferred_ios_version() {
     assert_eq!(details.versions[2]["id"], "live");
     assert!(details.warnings.is_empty());
     assert!(fake.responses.is_empty());
+}
+
+#[test]
+fn age_rating_is_optional_and_rejects_malformed_or_foreign_resources() {
+    let cancelled = AtomicBool::new(false);
+    for (value, status) in [
+        (json!({"id": "rating", "appId": "999"}), 200),
+        (json!({"advertising": false}), 200),
+        (json!({"errors": [{"detail": "private"}]}), 403),
+    ] {
+        let mut fake = Fake::default();
+        fake.app();
+        fake.response(
+            "/apps/123/app-infos?limit=200",
+            json!([resource("info", json!({"state": "READY_FOR_SALE"}))]),
+        );
+        fake.response(
+            "/apps/123/app-infos/info/localizations?limit=200",
+            json!([]),
+        );
+        fake.responses
+            .push_back(("/apps/123/app-infos/info/age-rating".into(), status, value));
+        fake.response("/apps/123/versions?platform=IOS&limit=200", json!([]));
+
+        let details = load(&mut fake, "123", &cancelled).unwrap();
+        assert!(details.age_rating.is_none());
+        assert_eq!(details.warnings.len(), 1);
+        assert!(details.warnings[0].starts_with("Age rating:"));
+        assert!(!details.warnings[0].contains("private"));
+        assert!(fake.responses.is_empty());
+    }
 }
 
 #[test]

@@ -30,9 +30,135 @@ pub(super) fn document(
         Document::Information => information(ui, workspace, details, palette),
         Document::Listing => listing(ui, workspace, details, palette),
         Document::Privacy => privacy(ui, workspace, details, palette),
+        Document::AgeRating => age_rating(ui, details, palette),
         Document::Versions => versions(ui, details, palette, loading, action),
         Document::Changes => changes(ui, workspace, details, palette),
         document => planned(ui, document, palette),
+    }
+}
+
+fn age_rating(ui: &mut Ui, details: &AppDetails, palette: Palette) {
+    let Some(rating) = details.age_rating.as_ref() else {
+        if details
+            .warnings
+            .iter()
+            .any(|warning| warning.starts_with("App information:"))
+        {
+            return;
+        }
+        unavailable(
+            ui,
+            details,
+            "Age rating:",
+            "No age rating declaration is available.",
+            palette,
+        );
+        return;
+    };
+
+    section(ui, "Rating Overrides", palette);
+    for (label, field) in [
+        ("Age rating override", "ageRatingOverrideV2"),
+        ("Korea age rating override", "koreaAgeRatingOverride"),
+        ("Kids age band", "kidsAgeBand"),
+        (
+            "GRAC classification number",
+            "gracRatingClassificationNumber",
+        ),
+        ("Developer age rating info URL", "developerAgeRatingInfoUrl"),
+    ] {
+        read_age_row(ui, rating, label, field, palette);
+    }
+
+    section_break(ui);
+    section(ui, "Features", palette);
+    for (label, field) in [
+        ("Advertising", "advertising"),
+        ("Contests", "contests"),
+        ("Gambling", "gambling"),
+        ("Simulated gambling", "gamblingSimulated"),
+        ("Loot boxes", "lootBox"),
+        ("Messaging and chat", "messagingAndChat"),
+        ("Parental controls", "parentalControls"),
+        ("Social media", "socialMedia"),
+        ("Social media age restricted", "socialMediaAgeRestricted"),
+        ("Unrestricted web access", "unrestrictedWebAccess"),
+        ("User generated content", "userGeneratedContent"),
+        ("Age assurance", "ageAssurance"),
+    ] {
+        read_age_row(ui, rating, label, field, palette);
+    }
+
+    section_break(ui);
+    section(ui, "Content", palette);
+    for (label, field) in [
+        (
+            "Alcohol, tobacco, or drug use or references",
+            "alcoholTobaccoOrDrugUseOrReferences",
+        ),
+        ("Weapons", "gunsOrOtherWeapons"),
+        ("Health or wellness topics", "healthOrWellnessTopics"),
+        (
+            "Medical or treatment information",
+            "medicalOrTreatmentInformation",
+        ),
+        ("Profanity or crude humor", "profanityOrCrudeHumor"),
+        (
+            "Graphic sexual content or nudity",
+            "sexualContentGraphicAndNudity",
+        ),
+        ("Sexual content or nudity", "sexualContentOrNudity"),
+        ("Horror or fear themes", "horrorOrFearThemes"),
+        ("Mature or suggestive themes", "matureOrSuggestiveThemes"),
+        ("Cartoon or fantasy violence", "violenceCartoonOrFantasy"),
+        (
+            "Realistic, prolonged, graphic, or sadistic violence",
+            "violenceRealisticProlongedGraphicOrSadistic",
+        ),
+        ("Realistic violence", "violenceRealistic"),
+    ] {
+        read_age_row(ui, rating, label, field, palette);
+    }
+}
+
+fn read_age_row(ui: &mut Ui, rating: &Value, label: &str, field: &str, palette: Palette) {
+    let value = match rating.get(field) {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::Bool(value)) => if *value { "Yes" } else { "No" }.into(),
+        Some(Value::String(value))
+            if !matches!(
+                field,
+                "gracRatingClassificationNumber" | "developerAgeRatingInfoUrl"
+            ) =>
+        {
+            age_rating_value(value)
+        }
+        Some(Value::String(value)) => value.clone(),
+        Some(value) => value.to_string(),
+    };
+    read_row(ui, label, &value, palette);
+}
+
+fn age_rating_value(value: &str) -> String {
+    match value {
+        "NONE" => "None".into(),
+        "ALL" => "All ages".into(),
+        "NINE_PLUS" => "9+".into(),
+        "THIRTEEN_PLUS" => "13+".into(),
+        "SIXTEEN_PLUS" => "16+".into(),
+        "EIGHTEEN_PLUS" => "18+".into(),
+        "TWELVE_PLUS" => "12+".into(),
+        "FIFTEEN_PLUS" => "15+".into(),
+        "NINETEEN_PLUS" => "19+".into(),
+        "FIVE_AND_UNDER" => "5 and under".into(),
+        "SIX_TO_EIGHT" => "6–8".into(),
+        "NINE_TO_ELEVEN" => "9–11".into(),
+        "INFREQUENT_OR_MILD" => "Infrequent or mild".into(),
+        "FREQUENT_OR_INTENSE" => "Frequent or intense".into(),
+        "INFREQUENT" => "Infrequent".into(),
+        "FREQUENT" => "Frequent".into(),
+        "UNRATED" => "Unrated".into(),
+        _ => value.into(),
     }
 }
 
@@ -327,7 +453,7 @@ fn versions(
 fn planned(ui: &mut Ui, document: Document, palette: Palette) {
     section(ui, document.title(), palette);
     ui.label(RichText::new("Planned").size(12.0).color(palette.muted));
-    let message = if matches!(document, Document::Review | Document::AgeRating) {
+    let message = if document == Document::Review {
         "This resource is not connected to the workspace yet."
     } else {
         "This resource is not available through the connection yet."

@@ -8,6 +8,18 @@ fn fixture() -> AppDetails {
         info: Some(
             json!({"id": "info-draft", "state": "PREPARE_FOR_SUBMISSION", "primaryCategoryId": "UTILITIES", "secondaryCategoryId": "PRODUCTIVITY"}),
         ),
+        age_rating: Some(json!({
+            "id": "rating-draft",
+            "advertising": false,
+            "gambling": true,
+            "gamblingSimulated": "FREQUENT_OR_INTENSE",
+            "ageRatingOverrideV2": "THIRTEEN_PLUS",
+            "kidsAgeBand": "SIX_TO_EIGHT",
+            "gracRatingClassificationNumber": "GRAC-AB-0123",
+            "developerAgeRatingInfoUrl": "https://example.com/age-rating/information/with/a/long/path",
+            "horrorOrFearThemes": null,
+            "violenceRealistic": "UNRECOGNIZED_FUTURE_VALUE"
+        })),
         version: Some(
             json!({"id": "version-draft", "platform": "IOS", "versionString": "2.0", "appVersionState": "PREPARE_FOR_SUBMISSION", "copyright": "2026 Example", "createdDate": "2026-10-13T12:00:00Z"}),
         ),
@@ -163,8 +175,69 @@ fn render_document(
 }
 
 #[test]
+fn age_rating_shows_read_only_values_and_a_proportional_empty_state() {
+    let (labels, _, _) = render_document(
+        Document::AgeRating,
+        768.0,
+        1024.0,
+        egui::Theme::Light,
+        fixture(),
+        false,
+    );
+    for label in [
+        "Rating Overrides",
+        "Features",
+        "Content",
+        "Age rating override",
+        "13+",
+        "Developer age rating info URL",
+        "https://example.com/age-rating/information/with/a/long/path",
+        "No",
+        "Yes",
+        "Frequent or intense",
+        "UNRECOGNIZED_FUTURE_VALUE",
+    ] {
+        assert!(
+            labels.iter().any(|text| text.contains(label)),
+            "missing {label:?}: {labels:?}"
+        );
+    }
+
+    let (labels, _, _) = render_document(
+        Document::AgeRating,
+        390.0,
+        844.0,
+        egui::Theme::Dark,
+        {
+            let mut details = fixture();
+            details.age_rating = None;
+            details
+        },
+        false,
+    );
+    assert!(labels.contains(&"No age rating declaration is available.".into()));
+
+    let mut details = fixture();
+    details.age_rating = None;
+    details
+        .warnings
+        .push("Age rating: Access was denied.".into());
+    let (labels, _, _) = render_document(
+        Document::AgeRating,
+        390.0,
+        844.0,
+        egui::Theme::Dark,
+        details,
+        false,
+    );
+    assert!(!labels.contains(&"No age rating declaration is available.".into()));
+    assert!(Document::AgeRating.connected());
+}
+
+#[test]
 fn command_w_closes_only_the_active_tab_and_preserves_edits() {
     let ctx = egui::Context::default();
+    crate::style::configure(&ctx);
     let credentials = AppleCredentials::test_credentials("test");
     let mut view = IosView::default();
     view.cache.insert(
@@ -336,6 +409,7 @@ fn workspace_documents_render_at_supported_sizes_and_themes_without_overflow() {
         (Document::Information, "App Store Categories"),
         (Document::Listing, "App Details"),
         (Document::Privacy, "Privacy Policy"),
+        (Document::AgeRating, "Rating Overrides"),
         (Document::Versions, "iOS Releases"),
         (Document::Media, "Screenshots & Previews"),
         (Document::Changes, "Local Changes"),
@@ -378,6 +452,10 @@ fn workspace_documents_render_at_supported_sizes_and_themes_without_overflow() {
                 }
                 if document == Document::Media {
                     assert!(labels.iter().any(|text| text == "Screenshot sets"));
+                }
+                if document == Document::AgeRating {
+                    assert!(!labels.iter().any(|text| text == "Planned resource"));
+                    assert!(!labels.iter().any(|text| text == "Planned"));
                 }
                 if document == Document::Changes {
                     assert!(
