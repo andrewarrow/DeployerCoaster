@@ -1,6 +1,6 @@
 use super::*;
-use egui::{vec2, Frame, Margin, Pos2, Rect, Shape};
-use serde_json::{json, Value};
+use egui::{Frame, Margin, Pos2, Rect, Shape, vec2};
+use serde_json::{Value, json};
 
 fn fixture() -> AppDetails {
     AppDetails {
@@ -327,9 +327,11 @@ fn workspace_documents_render_at_supported_sizes_and_themes_without_overflow() {
                     assert!(labels.iter().any(|text| text == "Screenshot sets"));
                 }
                 if document == Document::Changes {
-                    assert!(labels
-                        .iter()
-                        .any(|text| text == "An edited local description for review."));
+                    assert!(
+                        labels
+                            .iter()
+                            .any(|text| text == "An edited local description for review.")
+                    );
                 }
             }
         }
@@ -577,9 +579,11 @@ fn local_edits_are_isolated_by_route_field_locale_and_app_and_revert_cleanly() {
         "Version version-live",
     );
     assert_eq!(workspace.edits.len(), 4);
-    assert!(workspace.edits[&(live_route.into(), "description".into())]
-        .original
-        .is_none());
+    assert!(
+        workspace.edits[&(live_route.into(), "description".into())]
+            .original
+            .is_none()
+    );
     let null = Value::Null;
     let null_route = "/apps/123";
     workspace.edit(
@@ -604,9 +608,11 @@ fn local_edits_are_isolated_by_route_field_locale_and_app_and_revert_cleanly() {
         "Optional text",
         "App",
     );
-    assert!(!workspace
-        .edits
-        .contains_key(&(null_route.into(), "optionalText".into())));
+    assert!(
+        !workspace
+            .edits
+            .contains_key(&(null_route.into(), "optionalText".into()))
+    );
 
     workspace.open(Document::Changes);
     workspace.close(Document::Listing);
@@ -622,9 +628,11 @@ fn local_edits_are_isolated_by_route_field_locale_and_app_and_revert_cleanly() {
         "Description",
         "Version version-draft",
     );
-    assert!(!workspace
-        .edits
-        .contains_key(&(en_route.into(), "description".into())));
+    assert!(
+        !workspace
+            .edits
+            .contains_key(&(en_route.into(), "description".into()))
+    );
     assert_eq!(workspace.edits.len(), 3);
 
     let other = view.workspaces.entry("456".into()).or_default();
