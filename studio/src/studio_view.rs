@@ -11,7 +11,7 @@ mod tests;
 #[derive(Default)]
 pub(crate) struct StudioView {
     account: Option<String>,
-    selected_app: Option<AppleApp>,
+    requested_app: Option<AppleApp>,
     recents: Vec<AppleApp>,
     recents_path: Option<std::path::PathBuf>,
     picking: bool,
@@ -26,17 +26,12 @@ impl StudioView {
         self.search.clear();
     }
 
-    pub(crate) fn close(&mut self) {
-        self.selected_app = None;
-        self.picking = false;
+    pub(crate) fn set_error(&mut self, error: String) {
+        self.error = Some(error);
     }
 
-    pub(crate) fn selected_title(&self) -> Option<&str> {
-        self.selected_app.as_ref().map(AppleApp::title)
-    }
-
-    pub(crate) fn has_selected_document(&self) -> bool {
-        !self.picking && self.selected_app.is_some()
+    pub(crate) fn take_app_request(&mut self) -> Option<AppleApp> {
+        self.requested_app.take()
     }
 
     fn set_account(&mut self, account: Option<String>) {
@@ -44,7 +39,7 @@ impl StudioView {
             self.recents_path = account.as_deref().and_then(catalog::recents_path);
             self.recents = catalog::load_recents(self.recents_path.as_deref());
             self.account = account;
-            self.selected_app = None;
+            self.requested_app = None;
             self.error = None;
         }
     }
@@ -52,7 +47,7 @@ impl StudioView {
     fn select(&mut self, app: AppleApp) {
         self.error =
             catalog::remember(&mut self.recents, app.clone(), self.recents_path.as_deref()).err();
-        self.selected_app = Some(app);
+        self.requested_app = Some(app);
         self.picking = false;
     }
 
@@ -67,45 +62,32 @@ impl StudioView {
         if self.picking {
             apple.prepare_app_list(ui.ctx());
         }
-        let selected = !self.picking && self.selected_app.is_some();
-        let panel = CentralPanel::default();
-        let panel = if selected {
-            panel.frame(egui::Frame::new().fill(ui.visuals().panel_fill))
-        } else {
-            panel
-        };
-        panel.show(ui, |ui| {
-            if !self.picking
-                && let Some(app) = &self.selected_app
-            {
-                if let Some(error) = &self.error {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                }
-                apple.selected_app_ui(ui, app);
-            } else {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let width = ui.available_width().min(640.0);
-                        let top = ((ui.available_height() - 430.0).max(28.0) * 0.42).min(180.0);
-                        ui.add_space(top);
-                        ui.horizontal(|ui| {
-                            ui.add_space(((ui.available_width() - width) * 0.5).max(0.0));
-                            ui.allocate_ui_with_layout(
-                                vec2(width, 0.0),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| {
-                                    ui.set_width(width);
-                                    if self.picking {
-                                        command = self.picker(ui, apple);
-                                    } else {
-                                        self.start_screen(ui);
-                                    }
-                                },
-                            );
-                        });
-                    });
+        CentralPanel::default().show(ui, |ui| {
+            if let Some(error) = &self.error {
+                ui.colored_label(ui.visuals().error_fg_color, error);
             }
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let width = ui.available_width().min(640.0);
+                    let top = ((ui.available_height() - 430.0).max(28.0) * 0.42).min(180.0);
+                    ui.add_space(top);
+                    ui.horizontal(|ui| {
+                        ui.add_space(((ui.available_width() - width) * 0.5).max(0.0));
+                        ui.allocate_ui_with_layout(
+                            vec2(width, 0.0),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.set_width(width);
+                                if self.picking {
+                                    command = self.picker(ui, apple);
+                                } else {
+                                    self.start_screen(ui);
+                                }
+                            },
+                        );
+                    });
+                });
         });
         command
     }

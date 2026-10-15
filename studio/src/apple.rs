@@ -97,7 +97,6 @@ pub struct AppleStore {
     icons: crate::app_icons::AppIcons,
     sales: crate::apple_sales::SalesReports,
     app_copy: crate::apple_copy::AppCopy,
-    details: crate::ios_view::IosView,
 }
 
 impl AppleStore {
@@ -110,11 +109,6 @@ impl AppleStore {
             fetched_at: catalog::now(),
             ..Default::default()
         }
-    }
-
-    pub(crate) fn selected_app_ui(&mut self, ui: &mut egui::Ui, app: &AppleApp) {
-        self.details
-            .ui(ui, Some((&app.id, app.title())), self.credentials.as_ref());
     }
 
     pub(crate) fn selection_account(&self) -> Option<String> {
@@ -135,10 +129,6 @@ impl AppleStore {
         {
             self.start(ctx, false);
         }
-    }
-
-    pub(crate) fn clear_app_details_selection(&mut self) {
-        self.details.clear_selection();
     }
 
     pub(crate) fn app_context_menu(

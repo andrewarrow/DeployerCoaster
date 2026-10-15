@@ -49,6 +49,7 @@ pub enum AppWindow {
     Android,
     Apple,
     Sales,
+    Document(u64),
 }
 
 impl AppWindow {
@@ -59,6 +60,7 @@ impl AppWindow {
             Self::Android => "Android",
             Self::Apple => "Apple",
             Self::Sales => "Sales",
+            Self::Document(_) => "App",
         }
     }
 }
@@ -70,6 +72,13 @@ pub enum AppWindowAction {
     Close,
 }
 
+struct AppDocument {
+    id: u64,
+    app: crate::apple::AppleApp,
+    account: Option<String>,
+    view: crate::ios_view::IosView,
+}
+
 pub struct App {
     preferences: Preferences,
     preferences_path: Option<PathBuf>,
@@ -77,6 +86,8 @@ pub struct App {
     pending_action: Option<PendingAction>,
     quit: bool,
     studio_view: crate::studio_view::StudioView,
+    documents: Vec<AppDocument>,
+    next_document_id: u64,
     dashboard: crate::dashboard::Dashboard,
     codex: crate::codex_ui::Codex,
     codex_default_root: PathBuf,
@@ -115,6 +126,8 @@ impl App {
             pending_action: None,
             quit: false,
             studio_view: crate::studio_view::StudioView::default(),
+            documents: Vec::new(),
+            next_document_id: 0,
             dashboard: crate::dashboard::Dashboard::load(),
             codex: crate::codex_ui::Codex::new(codex_root),
             codex_default_root,
@@ -140,14 +153,16 @@ impl App {
         ctx.set_theme(self.preferences.appearance.theme());
         self.apple.poll(&ctx);
         #[cfg(not(target_os = "macos"))]
-        if self.pending_action.is_none() {
-            self.keyboard_shortcuts(&ctx);
-        }
-        #[cfg(not(target_os = "macos"))]
-        if let Some(command) = self.desktop_menu(ui) {
+        if self.pending_action.is_none()
+            && let Some(command) = self.keyboard_shortcuts(&ctx)
+        {
             self.command(command);
         }
-        if crate::native_titlebar_active(&ctx) && !self.studio_view.has_selected_document() {
+        #[cfg(not(target_os = "macos"))]
+        if let Some(command) = self.desktop_menu(ui, None) {
+            self.command(command);
+        }
+        if crate::native_titlebar_active(&ctx) {
             egui::Panel::top("native_window_title")
                 .exact_size(32.0)
                 .show_separator_line(false)
@@ -180,8 +195,46 @@ impl App {
         if let Some(command) = self.studio_view.ui(ui, &mut self.apple_store) {
             self.command(command);
         }
+        if let Some(app) = self.studio_view.take_app_request() {
+            self.open_document(app);
+        }
         self.about_window(&ctx);
         self.discard_modal(&ctx);
+    }
+
+    fn open_document(&mut self, app: crate::apple::AppleApp) {
+        let account = self.apple_store.selection_account();
+        // Reopening an app raises its existing window and keeps its edits intact.
+        let id = if let Some(document) = self
+            .documents
+            .iter()
+            .find(|document| document.account == account && document.app.id == app.id)
+        {
+            document.id
+        } else {
+            let id = self.next_document_id;
+            self.next_document_id += 1;
+            self.documents.push(AppDocument {
+                id,
+                app,
+                account,
+                view: crate::ios_view::IosView::default(),
+            });
+            id
+        };
+        self.requested_app_windows.push(AppWindow::Document(id));
+    }
+
+    pub fn window_title(&self, window: AppWindow) -> String {
+        match window {
+            AppWindow::Document(id) => self
+                .documents
+                .iter()
+                .find(|document| document.id == id)
+                .map(|document| format!("{} — {}", document.app.title(), metadata::APP_NAME))
+                .unwrap_or_else(|| metadata::APP_NAME.to_owned()),
+            _ => window.title().to_owned(),
+        }
     }
 
     // Keep the previous main view intact while the new platform views are built.
@@ -198,14 +251,16 @@ impl App {
         let ctx = ui.ctx().clone();
         ctx.set_theme(self.preferences.appearance.theme());
         #[cfg(not(target_os = "macos"))]
-        if self.pending_action.is_none() {
-            self.keyboard_shortcuts(&ctx);
+        if self.pending_action.is_none()
+            && let Some(command) = self.keyboard_shortcuts(&ctx)
+        {
+            self.command(command);
         }
 
         let mut selected_command = None;
         #[cfg(not(target_os = "macos"))]
         {
-            selected_command = self.desktop_menu(ui);
+            selected_command = self.desktop_menu(ui, None);
         }
 
         egui::Panel::top("chatgpt_connection")
@@ -344,10 +399,8 @@ impl App {
             Command::OpenPath(path) => self.request_action(PendingAction::OpenPath(path)),
             Command::Save => self.save(),
             Command::SaveAs => self.save_as(),
-            Command::CloseWorkspace => {
-                self.studio_view.close();
-                self.apple_store.clear_app_details_selection();
-            }
+            // Document close commands are handled by the focused native window.
+            Command::CloseWorkspace => {}
             Command::Quit => self.request_action(PendingAction::Quit),
             Command::Settings => {
                 self.settings_section = SettingsSection::General;
@@ -410,6 +463,51 @@ impl App {
         self.poll_codex(ui.ctx());
         self.apple.poll(ui.ctx());
         ui.ctx().set_theme(self.preferences.appearance.theme());
+        if let AppWindow::Document(id) = window {
+            #[cfg(not(target_os = "macos"))]
+            {
+                let shortcut = if self.pending_action.is_none() {
+                    self.keyboard_shortcuts(ui.ctx())
+                        .filter(|command| !matches!(command, Command::Save | Command::SaveAs))
+                } else {
+                    None
+                };
+                let command = self.desktop_menu(ui, Some(window)).or(shortcut);
+                if matches!(command, Some(Command::CloseWorkspace)) {
+                    return AppWindowAction::Close;
+                }
+                if let Some(command) = command {
+                    let open = matches!(command, Command::OpenWorkspace);
+                    self.command(command);
+                    if open {
+                        return AppWindowAction::FocusMain;
+                    }
+                }
+            }
+            let credentials = self.apple.credentials();
+            self.apple_store.set_credentials(credentials.clone());
+            let account = self.apple_store.selection_account();
+            let Some(document) = self.documents.iter_mut().find(|document| document.id == id)
+            else {
+                return AppWindowAction::Close;
+            };
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().fill(ui.visuals().panel_fill))
+                .show(ui, |ui| {
+                    if document.account != account {
+                        document.view = crate::ios_view::IosView::default();
+                        if crate::native_titlebar_active(ui.ctx()) {
+                            ui.add_space(44.0);
+                        }
+                        ui.label("This app belongs to a different Apple account. Reopen it from File → Open App.");
+                    } else {
+                        document.view.ui(ui, Some((&document.app.id, document.app.title())), credentials.as_ref());
+                    }
+                });
+            self.about_window(ui.ctx());
+            self.discard_modal(ui.ctx());
+            return AppWindowAction::None;
+        }
         if window == AppWindow::Settings {
             self.store_settings(ui);
             return AppWindowAction::None;
@@ -445,7 +543,7 @@ impl App {
                         .show(ui, |ui| settings = self.apple_store.sales_ui(ui, None));
                 }
                 AppWindow::Wizard => unreachable!(),
-                AppWindow::Settings => unreachable!(),
+                AppWindow::Settings | AppWindow::Document(_) => unreachable!(),
             });
         if settings {
             self.settings_section = SettingsSection::Apple;
@@ -459,7 +557,7 @@ impl App {
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn desktop_menu(&mut self, ui: &mut egui::Ui) -> Option<Command> {
+    fn desktop_menu(&mut self, ui: &mut egui::Ui, window: Option<AppWindow>) -> Option<Command> {
         let mut selected_command = None;
         egui::Panel::top("app_menu").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
@@ -482,14 +580,20 @@ impl App {
                     }
                     ui.separator();
                     if ui
-                        .add_enabled(self.workspace.is_some(), egui::Button::new("Save"))
+                        .add_enabled(
+                            window.is_none() && self.workspace.is_some(),
+                            egui::Button::new("Save"),
+                        )
                         .clicked()
                     {
                         selected_command = Some(Command::Save);
                         ui.close();
                     }
                     if ui
-                        .add_enabled(self.workspace.is_some(), egui::Button::new("Save As…"))
+                        .add_enabled(
+                            window.is_none() && self.workspace.is_some(),
+                            egui::Button::new("Save As…"),
+                        )
                         .clicked()
                     {
                         selected_command = Some(Command::SaveAs);
@@ -497,7 +601,7 @@ impl App {
                     }
                     if ui
                         .add_enabled(
-                            self.studio_view.selected_title().is_some(),
+                            matches!(window, Some(AppWindow::Document(_))),
                             egui::Button::new("Close App"),
                         )
                         .clicked()
@@ -550,29 +654,25 @@ impl App {
         if window == AppWindow::Wizard {
             self.codex.abandon_wizard_generation();
         }
-    }
-
-    pub fn window_error(&mut self, window: AppWindow) {
-        self.set_error(format!(
-            "Could not open the {} window. Please try again.",
-            window.title()
-        ));
-    }
-
-    #[cfg(target_os = "macos")]
-    pub(crate) fn native_titlebar_height(&self) -> f64 {
-        if self.studio_view.has_selected_document() {
-            44.0
-        } else {
-            32.0
+        if let AppWindow::Document(id) = window {
+            self.documents.retain(|document| document.id != id);
         }
     }
 
+    pub fn window_error(&mut self, window: AppWindow) {
+        let error = format!(
+            "Could not open the {} window. Please try again.",
+            window.title()
+        );
+        self.studio_view.set_error(error.clone());
+        self.set_error(error);
+    }
+
     #[cfg(target_os = "macos")]
-    pub fn native_menu_state(&self) -> crate::macos::MenuState {
+    pub fn native_menu_state(&self, window: Option<AppWindow>) -> crate::macos::MenuState {
         crate::macos::MenuState {
-            has_workspace: self.workspace.is_some(),
-            has_selected_app: self.studio_view.selected_title().is_some(),
+            has_workspace: window.is_none() && self.workspace.is_some(),
+            has_selected_app: matches!(window, Some(AppWindow::Document(_))),
             has_pending_action: self.pending_action.is_some(),
             show_sidebar: self.preferences.show_sidebar,
             show_inspector: self.preferences.show_inspector,
@@ -581,9 +681,6 @@ impl App {
     }
 
     pub fn title(&self) -> String {
-        if let Some(name) = self.studio_view.selected_title() {
-            return format!("{name} — {}", metadata::APP_NAME);
-        }
         let workspace = self.workspace.as_ref().map(|workspace| {
             let dirty = if workspace.is_dirty() { " *" } else { "" };
             format!("{}{}", workspace.document.name, dirty)
@@ -595,14 +692,16 @@ impl App {
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn keyboard_shortcuts(&mut self, ctx: &egui::Context) {
-        let shortcut = ctx.input_mut(|input| {
+    fn keyboard_shortcuts(&self, ctx: &egui::Context) -> Option<Command> {
+        ctx.input_mut(|input| {
             let command = input.modifiers.command;
             if !command {
                 return None;
             }
             if input.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::S) {
                 Some(Command::SaveAs)
+            } else if input.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::W) {
+                Some(Command::CloseWorkspace)
             } else if input.consume_key(Modifiers::COMMAND, Key::O) {
                 Some(Command::OpenWorkspace)
             } else if input.consume_key(Modifiers::COMMAND, Key::S) {
@@ -612,10 +711,7 @@ impl App {
             } else {
                 None
             }
-        });
-        if let Some(command) = shortcut {
-            self.command(command);
-        }
+        })
     }
 
     fn request_action(&mut self, action: PendingAction) {
@@ -900,6 +996,8 @@ mod tests {
             pending_action: None,
             quit: false,
             studio_view: crate::studio_view::StudioView::default(),
+            documents: Vec::new(),
+            next_document_id: 0,
             dashboard: crate::dashboard::Dashboard::default(),
             codex: crate::codex_ui::Codex::test_disconnected(std::env::current_dir().unwrap()),
             codex_default_root: std::env::current_dir().unwrap(),
@@ -914,6 +1012,105 @@ mod tests {
             requested_app_windows: Vec::new(),
             wizard: Wizard::default(),
         }
+    }
+
+    fn ios_app(id: &str, name: &str) -> crate::apple::AppleApp {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "name": name, "bundleId": format!("com.example.app{id}")
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn apps_open_independent_windows_and_reopening_focuses_the_existing_one() {
+        let mut app = app_with_workspace(Workspace::new());
+        app.open_document(ios_app("123", "First App"));
+        let first = app.take_app_window_request().unwrap();
+        app.command(Command::OpenWorkspace);
+        app.open_document(ios_app("456", "Second App"));
+        let second = app.take_app_window_request().unwrap();
+        assert_ne!(first, second);
+        assert_eq!(app.documents.len(), 2);
+        assert_eq!(
+            app.window_title(first),
+            format!("First App — {}", metadata::APP_NAME)
+        );
+        assert_eq!(
+            app.window_title(second),
+            format!("Second App — {}", metadata::APP_NAME)
+        );
+
+        app.open_document(ios_app("123", "First App"));
+        assert_eq!(app.take_app_window_request(), Some(first));
+        assert_eq!(app.documents.len(), 2);
+
+        // Closing either app leaves the other open, and never quits the application.
+        app.app_window_closed(first);
+        assert_eq!(app.documents.len(), 1);
+        assert_eq!(app.documents[0].app.id, "456");
+        assert!(!app.should_quit());
+        app.open_document(ios_app("123", "First App"));
+        assert_ne!(app.take_app_window_request(), Some(first));
+        assert_eq!(app.documents.len(), 2);
+        app.app_window_closed(second);
+        assert_eq!(app.documents[0].app.id, "123");
+    }
+
+    #[test]
+    fn document_windows_are_scoped_to_the_account_that_opened_them() {
+        let mut app = app_with_workspace(Workspace::new());
+        app.apple_store
+            .set_credentials(Some(crate::apple::AppleCredentials::test_credentials(
+                "one",
+            )));
+        app.open_document(ios_app("123", "First Account App"));
+        let first = app.take_app_window_request().unwrap();
+        app.apple_store
+            .set_credentials(Some(crate::apple::AppleCredentials::test_credentials(
+                "two",
+            )));
+        app.open_document(ios_app("123", "Second Account App"));
+        let second = app.take_app_window_request().unwrap();
+        assert_ne!(first, second);
+        assert_ne!(app.documents[0].account, app.documents[1].account);
+
+        // With the account disconnected, old windows show no cached app content.
+        let ctx = egui::Context::default();
+        crate::style::configure(&ctx);
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            assert_eq!(app.app_window_ui(first, ui), AppWindowAction::None);
+        });
+        let labels: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            labels
+                .iter()
+                .any(|text| text.contains("different Apple account"))
+        );
+        assert!(!labels.iter().any(|text| text.contains("First Account App")));
+        assert_eq!(app.documents.len(), 2);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_close_app_menu_tracks_the_focused_document_window() {
+        let mut app = app_with_workspace(Workspace::new());
+        app.open_document(ios_app("123", "First App"));
+        let document = app.take_app_window_request().unwrap();
+        assert!(app.native_menu_state(Some(document)).has_selected_app);
+        assert!(!app.native_menu_state(None).has_selected_app);
+        assert!(
+            !app.native_menu_state(Some(AppWindow::Settings))
+                .has_selected_app
+        );
+        assert!(!app.native_menu_state(Some(document)).has_workspace);
+        assert!(app.native_menu_state(None).has_workspace);
     }
 
     #[test]

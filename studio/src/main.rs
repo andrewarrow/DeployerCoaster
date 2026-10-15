@@ -74,24 +74,18 @@ impl DesktopWindow {
         let icon = Icon::from_rgba(logo.to_vec(), logo.width(), logo.height())?;
         let attributes = Window::default_attributes()
             .with_title(title)
-            .with_inner_size(if kind.is_some() {
-                if kind == Some(app::AppWindow::Settings) {
-                    LogicalSize::new(820.0, 620.0)
-                } else if kind == Some(app::AppWindow::Sales) {
-                    LogicalSize::new(900.0, 680.0)
-                } else if kind == Some(app::AppWindow::Wizard) {
-                    LogicalSize::new(560.0, 400.0)
-                } else {
-                    LogicalSize::new(640.0, 560.0)
-                }
-            } else {
-                LogicalSize::new(1440.0, 900.0)
+            .with_inner_size(match kind {
+                None | Some(app::AppWindow::Document(_)) => LogicalSize::new(1440.0, 900.0),
+                Some(app::AppWindow::Settings) => LogicalSize::new(820.0, 620.0),
+                Some(app::AppWindow::Sales) => LogicalSize::new(900.0, 680.0),
+                Some(app::AppWindow::Wizard) => LogicalSize::new(560.0, 400.0),
+                _ => LogicalSize::new(640.0, 560.0),
             })
             .with_min_inner_size(LogicalSize::new(390.0, 360.0))
             .with_window_icon(Some(icon))
             .with_visible(false);
         #[cfg(target_os = "macos")]
-        let attributes = if kind.is_none() {
+        let attributes = if kind.is_none() || matches!(kind, Some(app::AppWindow::Document(_))) {
             use winit::platform::macos::WindowAttributesExtMacOS;
             context.data_mut(|data| data.insert_temp(egui::Id::new("unified_titlebar"), true));
             attributes
@@ -178,11 +172,17 @@ impl Desktop {
                 existing.window.request_redraw();
                 continue;
             }
-            match DesktopWindow::new(event_loop, self.proxy.clone(), Some(kind), kind.title()) {
+            match DesktopWindow::new(
+                event_loop,
+                self.proxy.clone(),
+                Some(kind),
+                &self.app.window_title(kind),
+            ) {
                 Ok(window) => self.windows.push(window),
                 Err(error) => {
                     log::error!("Could not open {} window: {error}", kind.title());
                     self.app.window_error(kind);
+                    self.app.app_window_closed(kind);
                     self.focus_main_window();
                 }
             }
@@ -196,6 +196,25 @@ impl Desktop {
             main.window.focus_window();
             main.window.request_redraw();
         }
+    }
+
+    fn focus_main_window_if_last_document_closed(&self, kind: app::AppWindow) {
+        if matches!(kind, app::AppWindow::Document(_))
+            && !self
+                .windows
+                .iter()
+                .any(|window| matches!(window.kind, Some(app::AppWindow::Document(_))))
+        {
+            self.focus_main_window();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn focused_kind(&self) -> Option<app::AppWindow> {
+        self.windows
+            .iter()
+            .find(|window| window.window.has_focus())
+            .and_then(|window| window.kind)
     }
 
     fn redraw(&mut self, event_loop: &ActiveEventLoop, index: usize) {
@@ -228,7 +247,7 @@ impl Desktop {
         #[cfg(target_os = "macos")]
         if desktop.window.has_focus() {
             macos::update_menu_state(
-                self.app.native_menu_state(),
+                self.app.native_menu_state(desktop.kind),
                 desktop.context.egui_wants_keyboard_input(),
             );
         }
@@ -254,13 +273,21 @@ impl Desktop {
             Vec::new(),
             &desktop.window,
         );
-        if desktop.kind.is_none() {
-            desktop.window.set_title(&self.app.title());
+        if desktop.kind.is_none() || matches!(desktop.kind, Some(app::AppWindow::Document(_))) {
             #[cfg(target_os = "macos")]
-            macos::align_titlebar_buttons(&desktop.window, self.app.native_titlebar_height());
+            macos::align_titlebar_buttons(
+                &desktop.window,
+                if desktop.kind.is_none() { 32.0 } else { 44.0 },
+            );
         }
+        desktop.window.set_title(
+            &desktop
+                .kind
+                .map_or_else(|| self.app.title(), |kind| self.app.window_title(kind)),
+        );
         if desktop.show_on_redraw {
             desktop.window.set_visible(true);
+            desktop.window.focus_window();
             desktop.show_on_redraw = false;
         }
         if let Some(deadline) = output
@@ -293,6 +320,7 @@ impl Desktop {
                 if let Some(kind) = desktop.kind {
                     self.app.app_window_closed(kind);
                     self.windows.remove(index);
+                    self.focus_main_window_if_last_document_closed(kind);
                     return;
                 }
             }
@@ -351,12 +379,19 @@ impl ApplicationHandler<Instant> for Desktop {
                 if let Some(kind) = desktop.kind {
                     self.app.app_window_closed(kind);
                     self.windows.remove(index);
+                    self.focus_main_window_if_last_document_closed(kind);
+                } else if self
+                    .windows
+                    .iter()
+                    .any(|window| matches!(window.kind, Some(app::AppWindow::Document(_))))
+                {
+                    self.windows[index].window.set_visible(false);
                 } else {
                     self.app.command(commands::Command::Quit);
                     if self.app.should_quit() {
                         event_loop.exit();
                     } else {
-                        desktop.window.request_redraw();
+                        self.windows[index].window.request_redraw();
                     }
                 }
             }
@@ -377,7 +412,7 @@ impl ApplicationHandler<Instant> for Desktop {
             WindowEvent::Focused(true) => {
                 #[cfg(target_os = "macos")]
                 macos::update_menu_state(
-                    self.app.native_menu_state(),
+                    self.app.native_menu_state(desktop.kind),
                     desktop.context.egui_wants_keyboard_input(),
                 );
             }
@@ -391,7 +426,7 @@ impl ApplicationHandler<Instant> for Desktop {
         while let Some(action) = macos::take_menu_action() {
             match action {
                 macos::MenuAction::Command(command) => {
-                    let state = self.app.native_menu_state();
+                    let state = self.app.native_menu_state(self.focused_kind());
                     let replaces_workspace = matches!(
                         &command,
                         commands::Command::OpenWorkspace
@@ -401,6 +436,18 @@ impl ApplicationHandler<Instant> for Desktop {
                             | commands::Command::Quit
                     );
                     if !state.has_pending_action || !replaces_workspace {
+                        if matches!(command, commands::Command::CloseWorkspace) {
+                            if let Some(index) = self.windows.iter().position(|window| {
+                                window.window.has_focus()
+                                    && matches!(window.kind, Some(app::AppWindow::Document(_)))
+                            }) {
+                                let kind = self.windows[index].kind.unwrap();
+                                self.app.app_window_closed(kind);
+                                self.windows.remove(index);
+                                self.focus_main_window_if_last_document_closed(kind);
+                            }
+                            continue;
+                        }
                         let focus_main =
                             replaces_workspace || matches!(command, commands::Command::Settings);
                         self.app.command(command);
@@ -410,7 +457,10 @@ impl ApplicationHandler<Instant> for Desktop {
                     }
                 }
                 macos::MenuAction::CloseTab => {
-                    if !self.app.native_menu_state().has_pending_action
+                    if !self
+                        .app
+                        .native_menu_state(self.focused_kind())
+                        .has_pending_action
                         && let Some(desktop) = self
                             .windows
                             .iter_mut()
@@ -450,7 +500,7 @@ impl ApplicationHandler<Instant> for Desktop {
                 }
             }
             macos::update_menu_state(
-                self.app.native_menu_state(),
+                self.app.native_menu_state(self.focused_kind()),
                 self.windows
                     .iter()
                     .find(|window| window.window.has_focus())

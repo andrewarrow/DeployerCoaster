@@ -112,7 +112,7 @@ fn new_is_no_op_open_uses_picker_and_cancel_returns_to_start() {
 }
 
 #[test]
-fn picker_and_recent_rows_select_persist_and_show_only_app_details() {
+fn picker_and_recent_rows_request_windows_and_persist_recents() {
     let directory = tempfile::tempdir().unwrap();
     for recent in [false, true] {
         let ctx = egui::Context::default();
@@ -127,60 +127,45 @@ fn picker_and_recent_rows_select_persist_and_show_only_app_details() {
             view.open();
         }
         // Render only selection controls, so this test never requests live app details.
-        let mut draw = |events| {
-            ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(768.0, 1024.0))),
-                    events,
-                    ..Default::default()
-                },
-                |ui| {
-                    if view.selected_app.is_none() {
-                        if recent {
-                            view.start_screen(ui);
-                        } else {
-                            view.picker(ui, &mut apple);
+        {
+            let mut draw = |events| {
+                ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(768.0, 1024.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        if view.requested_app.is_none() {
+                            if recent {
+                                view.start_screen(ui);
+                            } else {
+                                view.picker(ui, &mut apple);
+                            }
                         }
-                    }
-                },
-            )
-        };
-        let _ = draw(vec![]);
-        let output = draw(vec![]);
-        click(&mut draw, text_position(&output, "Example App").unwrap());
-        drop(draw);
-        assert_eq!(view.selected_title(), Some("Example App"));
+                    },
+                )
+            };
+            let _ = draw(vec![]);
+            let output = draw(vec![]);
+            click(&mut draw, text_position(&output, "Example App").unwrap());
+        }
         assert!(!view.picking);
         assert_eq!(
             catalog::load_recents(view.recents_path.as_deref())[0].id,
             "123"
         );
-        // Render the selected surface without live credentials or network requests.
-        view.account = None;
-        let output = render(
-            &ctx,
-            &mut view,
-            &mut AppleStore::default(),
-            [390.0, 844.0],
-            vec![],
-        );
-        assert_eq!(view.selected_title(), Some("Example App"));
-        assert!(text_position(&output, "Connect an Apple account").is_some());
-        for label in ["Recent Apps", "Search", "android", "ios"] {
-            assert!(text_position(&output, label).is_none());
-        }
-        view.account = Some("previous-account".into());
-        let output = render(
-            &ctx,
-            &mut view,
-            &mut AppleStore::default(),
-            [390.0, 844.0],
-            vec![],
-        );
-        // Account changes clear the selection, preventing cross-account details.
-        assert!(view.selected_title().is_none());
+        let selected = view.take_app_request().unwrap();
+        assert_eq!(selected.id, "123");
+        assert_eq!(selected.title(), "Example App");
+        assert!(view.take_app_request().is_none());
+        // The chooser remains available for opening the next app.
+        let output = render(&ctx, &mut view, &mut apple, [390.0, 844.0], vec![]);
         assert!(text_position(&output, "Recent Apps").is_some());
-        assert!(text_position(&output, "android").is_none());
-        assert!(text_position(&output, "ios").is_none());
+        view.select(app("456", "Another App"));
+        assert_eq!(view.take_app_request().unwrap().id, "456");
+        view.select(app("123", "Example App"));
+        view.set_account(Some("different-account".into()));
+        assert!(view.take_app_request().is_none());
     }
 }
