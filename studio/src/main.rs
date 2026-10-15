@@ -166,7 +166,13 @@ impl Desktop {
 
     fn open_app_windows(&mut self, event_loop: &ActiveEventLoop) {
         while let Some(kind) = self.app.take_app_window_request() {
-            if let Some(existing) = self.windows.iter().find(|window| window.kind == Some(kind)) {
+            if let Some(index) = self
+                .windows
+                .iter()
+                .position(|window| window.kind == Some(kind))
+            {
+                self.dismiss_chooser(kind);
+                let existing = &self.windows[index];
                 existing.window.set_minimized(false);
                 existing.window.focus_window();
                 existing.window.request_redraw();
@@ -178,7 +184,10 @@ impl Desktop {
                 Some(kind),
                 &self.app.window_title(kind),
             ) {
-                Ok(window) => self.windows.push(window),
+                Ok(window) => {
+                    self.windows.push(window);
+                    self.dismiss_chooser(kind);
+                }
                 Err(error) => {
                     log::error!("Could not open {} window: {error}", kind.title());
                     self.app.window_error(kind);
@@ -186,6 +195,15 @@ impl Desktop {
                     self.focus_main_window();
                 }
             }
+        }
+    }
+
+    fn dismiss_chooser(&mut self, kind: app::AppWindow) {
+        if matches!(kind, app::AppWindow::Document(_) | app::AppWindow::Wizard)
+            && let Some(main) = self.windows.iter_mut().find(|window| window.kind.is_none())
+        {
+            main.show_on_redraw = false;
+            main.window.set_visible(false);
         }
     }
 
@@ -198,12 +216,14 @@ impl Desktop {
         }
     }
 
-    fn focus_main_window_if_last_document_closed(&self, kind: app::AppWindow) {
-        if matches!(kind, app::AppWindow::Document(_))
-            && !self
-                .windows
-                .iter()
-                .any(|window| matches!(window.kind, Some(app::AppWindow::Document(_))))
+    fn focus_main_window_if_last_project_closed(&self, kind: app::AppWindow) {
+        if matches!(kind, app::AppWindow::Document(_) | app::AppWindow::Wizard)
+            && !self.windows.iter().any(|window| {
+                matches!(
+                    window.kind,
+                    Some(app::AppWindow::Document(_) | app::AppWindow::Wizard)
+                )
+            })
         {
             self.focus_main_window();
         }
@@ -320,7 +340,7 @@ impl Desktop {
                 if let Some(kind) = desktop.kind {
                     self.app.app_window_closed(kind);
                     self.windows.remove(index);
-                    self.focus_main_window_if_last_document_closed(kind);
+                    self.focus_main_window_if_last_project_closed(kind);
                     return;
                 }
             }
@@ -379,12 +399,13 @@ impl ApplicationHandler<Instant> for Desktop {
                 if let Some(kind) = desktop.kind {
                     self.app.app_window_closed(kind);
                     self.windows.remove(index);
-                    self.focus_main_window_if_last_document_closed(kind);
-                } else if self
-                    .windows
-                    .iter()
-                    .any(|window| matches!(window.kind, Some(app::AppWindow::Document(_))))
-                {
+                    self.focus_main_window_if_last_project_closed(kind);
+                } else if self.windows.iter().any(|window| {
+                    matches!(
+                        window.kind,
+                        Some(app::AppWindow::Document(_) | app::AppWindow::Wizard)
+                    )
+                }) {
                     self.windows[index].window.set_visible(false);
                 } else {
                     self.app.command(commands::Command::Quit);
@@ -444,7 +465,7 @@ impl ApplicationHandler<Instant> for Desktop {
                                 let kind = self.windows[index].kind.unwrap();
                                 self.app.app_window_closed(kind);
                                 self.windows.remove(index);
-                                self.focus_main_window_if_last_document_closed(kind);
+                                self.focus_main_window_if_last_project_closed(kind);
                             }
                             continue;
                         }

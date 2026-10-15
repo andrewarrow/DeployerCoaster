@@ -93,22 +93,45 @@ fn startup_and_picker_fit_all_supported_sizes_and_themes() {
 }
 
 #[test]
-fn new_is_no_op_open_uses_picker_and_cancel_returns_to_start() {
+fn open_uses_picker_and_cancel_returns_to_start() {
     let ctx = egui::Context::default();
     crate::style::configure(&ctx);
     let mut view = StudioView::default();
     let mut apple = AppleStore::default();
     let mut draw = |events| render(&ctx, &mut view, &mut apple, [390.0, 844.0], events);
     let output = draw(vec![]);
-    click(&mut draw, text_position(&output, "Create New…").unwrap());
-    let output = draw(vec![]);
-    assert!(text_position(&output, "Recent Apps").is_some());
     click(&mut draw, text_position(&output, "Open App…").unwrap());
     let output = draw(vec![]);
     assert!(text_position(&output, "Apple settings…").is_some());
     click(&mut draw, text_position(&output, "Cancel").unwrap());
     let output = draw(vec![]);
     assert!(text_position(&output, "Recent Apps").is_some());
+}
+
+#[test]
+fn create_new_requests_the_wizard() {
+    let ctx = egui::Context::default();
+    crate::style::configure(&ctx);
+    let mut view = StudioView::default();
+    let mut apple = AppleStore::default();
+    let mut commands = Vec::new();
+    let mut draw = |events| {
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(390.0, 844.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                if let Some(command) = view.ui(ui, &mut apple) {
+                    commands.push(command);
+                }
+            },
+        )
+    };
+    let output = draw(vec![]);
+    click(&mut draw, text_position(&output, "Create New…").unwrap());
+    assert!(matches!(commands.as_slice(), [Command::Wizard]));
 }
 
 #[test]

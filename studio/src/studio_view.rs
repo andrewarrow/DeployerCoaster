@@ -82,7 +82,7 @@ impl StudioView {
                                 if self.picking {
                                     command = self.picker(ui, apple);
                                 } else {
-                                    self.start_screen(ui);
+                                    command = self.start_screen(ui);
                                 }
                             },
                         );
@@ -92,7 +92,8 @@ impl StudioView {
         command
     }
 
-    fn start_screen(&mut self, ui: &mut Ui) {
+    fn start_screen(&mut self, ui: &mut Ui) -> Option<Command> {
+        let mut command = None;
         ui.vertical_centered(|ui| {
             if self.logo.is_none()
                 && let Ok(image) = image::load_from_memory(crate::metadata::LOGO_BYTES)
@@ -129,8 +130,12 @@ impl StudioView {
             {
                 self.open();
             }
-            // Creating apps is intentionally a no-op until that workflow is implemented.
-            let _ = ui.add_sized([width, 44.0], Button::new("Create New…"));
+            if ui
+                .add_sized([width, 44.0], Button::new("Create New…"))
+                .clicked()
+            {
+                command = Some(Command::Wizard);
+            }
         });
         ui.add_space(24.0);
         ui.label(RichText::new("Recent Apps").strong());
@@ -143,6 +148,7 @@ impl StudioView {
                 }
             }
         }
+        command
     }
 
     fn picker(&mut self, ui: &mut Ui, apple: &mut AppleStore) -> Option<Command> {
