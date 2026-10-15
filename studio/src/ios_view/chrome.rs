@@ -24,7 +24,7 @@ pub(super) fn toolbar(
             let response = ui
                 .menu_button("    ", |ui| {
                     ui.set_width(260.0);
-                    navigation_rows(ui, workspace, palette, true);
+                    navigation_rows(ui, workspace, details, palette, true);
                 })
                 .response
                 .on_hover_text("Resource navigator");
@@ -194,7 +194,13 @@ pub(super) fn version_picker(
     });
 }
 
-pub(super) fn navigator(ui: &mut Ui, workspace: &mut Workspace, name: &str, palette: Palette) {
+pub(super) fn navigator(
+    ui: &mut Ui,
+    workspace: &mut Workspace,
+    details: Option<&AppDetails>,
+    name: &str,
+    palette: Palette,
+) {
     egui::Panel::bottom("navigator_filter")
         .exact_size(34.0)
         .frame(palette.frame(palette.sidebar, Margin::symmetric(8, 6)))
@@ -226,12 +232,18 @@ pub(super) fn navigator(ui: &mut Ui, workspace: &mut Workspace, name: &str, pale
                         ui.add(Label::new(semibold(name).size(13.0)).truncate());
                     });
                     ui.add_space(6.0);
-                    navigation_rows(ui, workspace, palette, false);
+                    navigation_rows(ui, workspace, details, palette, false);
                 });
         });
 }
 
-fn navigation_rows(ui: &mut Ui, workspace: &mut Workspace, palette: Palette, menu: bool) {
+fn navigation_rows(
+    ui: &mut Ui,
+    workspace: &mut Workspace,
+    details: Option<&AppDetails>,
+    palette: Palette,
+    menu: bool,
+) {
     let filter = workspace.filter.trim().to_lowercase();
     ui.spacing_mut().item_spacing.y = 2.0;
     for (group, documents) in GROUPS {
@@ -249,7 +261,7 @@ fn navigation_rows(ui: &mut Ui, workspace: &mut Workspace, palette: Palette, men
         }
         let mut rows = |ui: &mut Ui| {
             for document in &visible {
-                if document_row(ui, workspace, *document, palette) && menu {
+                if document_row(ui, workspace, *document, details, palette) && menu {
                     ui.close();
                 }
             }
@@ -283,6 +295,7 @@ fn document_row(
     ui: &mut Ui,
     workspace: &mut Workspace,
     document: Document,
+    details: Option<&AppDetails>,
     palette: Palette,
 ) -> bool {
     let selected = workspace.active == document;
@@ -293,20 +306,40 @@ fn document_row(
     } else {
         palette.muted
     };
-    let response = ui.add_sized(
-        [ui.available_width(), 25.0],
-        Button::selectable(selected, "").fill(if selected {
-            palette.selection
-        } else {
-            Color32::TRANSPARENT
-        }),
-    );
+    let missing = details.and_then(|details| document.missing_data(details));
+    // Reserve a stable gutter, outside the selection, so late results don't move rows.
+    let response = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let (gutter, marker) = ui.allocate_exact_size(vec2(14.0, 25.0), Sense::hover());
+            if let Some(reason) = missing {
+                marker.on_hover_text(reason);
+                let red = if ui.visuals().dark_mode {
+                    Color32::from_rgb(255, 69, 58)
+                } else {
+                    Color32::from_rgb(255, 59, 48)
+                };
+                ui.painter().circle_filled(gutter.center(), 5.0, red);
+            }
+            ui.add_sized(
+                [ui.available_width(), 25.0],
+                Button::selectable(selected, "").fill(if selected {
+                    palette.selection
+                } else {
+                    Color32::TRANSPARENT
+                }),
+            )
+        })
+        .inner;
     response.widget_info(|| {
         egui::WidgetInfo::selected(
             egui::WidgetType::SelectableLabel,
             ui.is_enabled(),
             selected,
-            document.title(),
+            missing.map_or_else(
+                || document.title().to_owned(),
+                |reason| format!("{} · {reason}", document.title()),
+            ),
         )
     });
     let rect = response.rect;
@@ -333,7 +366,9 @@ fn document_row(
             .circle_filled(egui::pos2(rect.right() - 8.0, rect.center().y), 2.5, color);
     }
     let clicked = response.clicked();
-    response.on_hover_text(if document.connected() {
+    response.on_hover_text(if let Some(reason) = missing {
+        format!("{} · {reason}", document.title())
+    } else if document.connected() {
         document.title().into()
     } else {
         format!("{} · Planned section", document.title())

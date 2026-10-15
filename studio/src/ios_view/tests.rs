@@ -35,7 +35,185 @@ fn fixture() -> AppDetails {
             json!({"id": "version-en", "locale": "en-US", "description": "An English description with multiple paragraphs.\n\nThis is another paragraph with enough words to exercise wrapping in narrow windows, with a long editorial sentence that runs through the whole width of the content area.", "keywords": "example,app,test", "promotionalText": "Try our latest features", "whatsNew": "New features", "supportUrl": "https://example.com/support", "marketingUrl": "https://example.com/marketing"}),
             json!({"id": "version-fr", "locale": "fr-FR", "description": "Une description en français avec plusieurs paragraphes.\n\nCette deuxième section contient suffisamment de mots pour vérifier le retour à la ligne sur les petits écrans.", "keywords": "exemple,application,test", "promotionalText": "Découvrez les dernières nouveautés", "whatsNew": "De nouvelles fonctionnalités", "supportUrl": "https://example.com/fr/aide", "marketingUrl": "https://example.com/fr"}),
         ],
+        review_contact: Some(Ok(Some(json!({
+            "id": "contact", "contactFirstName": "Alex", "contactLastName": "Example",
+            "contactPhone": "+1 555 0100", "contactEmail": "review@example.com"
+        })))),
         ..Default::default()
+    }
+}
+
+#[test]
+fn missing_data_checks_all_languages_and_ignores_optional_fields_and_failed_reads() {
+    let mut details = fixture();
+    for document in [
+        Document::Information,
+        Document::Listing,
+        Document::Versions,
+        Document::Privacy,
+    ] {
+        assert!(document.missing_data(&details).is_none(), "{document:?}");
+    }
+    details.info.as_mut().unwrap()["secondaryCategoryId"] = Value::Null;
+    for locale in &mut details.version_localizations {
+        for field in ["marketingUrl", "promotionalText", "whatsNew"] {
+            locale[field] = Value::Null;
+        }
+    }
+    assert!(Document::Information.missing_data(&details).is_none());
+    assert!(Document::Listing.missing_data(&details).is_none());
+
+    details.info_localizations[1]["privacyPolicyUrl"] = json!("  \n");
+    assert!(Document::Privacy.missing_data(&details).is_some());
+    details
+        .warnings
+        .push("App localizations: Access was denied.".into());
+    assert!(Document::Privacy.missing_data(&details).is_none());
+    details.app["contentRightsDeclaration"] = Value::Null;
+    assert!(Document::Privacy.missing_data(&details).is_some());
+
+    details.version_localizations[1]["description"] = Value::Null;
+    assert!(Document::Listing.missing_data(&details).is_some());
+    details
+        .warnings
+        .push("Version localizations: Temporarily unavailable.".into());
+    assert!(Document::Listing.missing_data(&details).is_none());
+    details.warnings.clear();
+    details.info_localizations.pop();
+    assert!(Document::Listing.missing_data(&details).is_some());
+    details.version = None;
+    assert!(Document::Versions.missing_data(&details).is_some());
+    details
+        .warnings
+        .push("iOS version: Access was denied.".into());
+    assert!(Document::Versions.missing_data(&details).is_none());
+
+    for (_, documents) in documents::GROUPS {
+        for document in *documents {
+            if !document.connected() {
+                assert!(document.missing_data(&details).is_none(), "{document:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn age_rating_answers_accept_false_and_none_but_detect_unanswered_questions() {
+    let mut details = super::preview::preview_details();
+    assert!(Document::AgeRating.missing_data(&details).is_none());
+    details.age_rating.as_mut().unwrap()["gambling"] = json!(false);
+    details.age_rating.as_mut().unwrap()["ageRatingOverrideV2"] = Value::Null;
+    details.age_rating.as_mut().unwrap()["kidsAgeBand"] = Value::Null;
+    assert!(Document::AgeRating.missing_data(&details).is_none());
+    details.age_rating.as_mut().unwrap()["advertising"] = Value::Null;
+    assert!(Document::AgeRating.missing_data(&details).is_some());
+    details.age_rating = None;
+    assert!(Document::AgeRating.missing_data(&details).is_some());
+    details
+        .warnings
+        .push("Age rating: Access was denied.".into());
+    assert!(Document::AgeRating.missing_data(&details).is_none());
+}
+
+#[test]
+fn review_checks_arrive_after_details_and_are_cancelled_when_switching_apps() {
+    let mut view = IosView::default();
+    view.select("123");
+    let (sender, result) = mpsc::channel();
+    view.job = Some(Job {
+        result,
+        cancelled: Arc::new(AtomicBool::new(false)),
+    });
+    let (review_sender, result) = mpsc::channel();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    view.review_job = Some(Job {
+        result,
+        cancelled: cancelled.clone(),
+    });
+    view.poll();
+    assert!(view.cache.is_empty());
+    let mut details = fixture();
+    details.review_contact = None;
+    sender.send(Ok(details)).unwrap();
+    view.poll();
+    assert!(view.job.is_none());
+    assert!(view.review_job.is_some());
+    assert!(!cancelled.load(Ordering::Relaxed));
+    let details = view.cache["123"].data.as_ref().unwrap();
+    assert!(Document::Review.missing_data(details).is_none());
+
+    review_sender.send(Ok(None)).unwrap();
+    view.poll();
+    assert!(
+        Document::Review
+            .missing_data(view.cache["123"].data.as_ref().unwrap())
+            .is_some()
+    );
+    let (_, result) = mpsc::channel();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    view.review_job = Some(Job {
+        result,
+        cancelled: cancelled.clone(),
+    });
+    view.select("456");
+    assert!(cancelled.load(Ordering::Relaxed));
+    assert!(view.review_job.is_none());
+    assert!(!view.cache.contains_key("456"));
+}
+
+#[test]
+fn navigator_dots_appear_only_for_confirmed_missing_data_without_moving_rows() {
+    for theme in [egui::Theme::Light, egui::Theme::Dark] {
+        let ctx = egui::Context::default();
+        crate::style::configure(&ctx);
+        ctx.set_theme(theme);
+        let mut workspace = Workspace::default();
+        workspace.filter = "Privacy".into();
+        workspace.open(Document::Privacy);
+        let mut details = fixture();
+        details.app["contentRightsDeclaration"] = Value::Null;
+        let mut name_positions = Vec::new();
+        for (data, expect_dot) in [
+            (None, false),
+            (Some(&details), true),
+            (Some(&fixture()), false),
+        ] {
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    ui.set_width(280.0);
+                    chrome::navigator(
+                        ui,
+                        &mut workspace,
+                        data,
+                        "Example",
+                        Palette::new(ui.visuals().dark_mode),
+                    );
+                });
+            });
+            let red = if theme == egui::Theme::Dark {
+                Color32::from_rgb(255, 69, 58)
+            } else {
+                Color32::from_rgb(255, 59, 48)
+            };
+            let dots: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    Shape::Circle(circle) if circle.fill == red && circle.radius == 5.0 => {
+                        Some(circle)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(dots.len(), usize::from(expect_dot));
+            let text = text_center(&output, "Privacy & Content Rights");
+            if expect_dot {
+                assert!(dots[0].center.x < text.x);
+                assert!((dots[0].center.y - text.y).abs() < 1.0);
+            }
+            name_positions.push(text);
+        }
+        assert!(name_positions.windows(2).all(|p| p[0] == p[1]));
     }
 }
 
@@ -410,6 +588,7 @@ fn workspace_documents_render_at_supported_sizes_and_themes_without_overflow() {
         (Document::Listing, "App Details"),
         (Document::Privacy, "Privacy Policy"),
         (Document::AgeRating, "Rating Overrides"),
+        (Document::Review, "Review Contact"),
         (Document::Versions, "iOS Releases"),
         (Document::Media, "Screenshots & Previews"),
         (Document::Changes, "Local Changes"),

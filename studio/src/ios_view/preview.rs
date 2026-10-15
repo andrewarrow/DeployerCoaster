@@ -6,7 +6,7 @@ use std::{fs, path::PathBuf};
 
 const APP_ID: &str = "6743921801";
 
-fn preview_details() -> AppDetails {
+pub(super) fn preview_details() -> AppDetails {
     AppDetails {
         app: json!({
             "id": APP_ID,
@@ -120,6 +120,10 @@ fn preview_details() -> AppDetails {
                 "marketingUrl": "https://fieldnotes.app/fr"
             }),
         ],
+        review_contact: Some(Ok(Some(json!({
+            "id": "review", "contactFirstName": "Alex", "contactLastName": "Example",
+            "contactPhone": "+1 555 0100", "contactEmail": "review@fieldnotes.app"
+        })))),
         ..Default::default()
     }
 }
@@ -232,6 +236,7 @@ fn render_ios_workspace_previews() {
             (Document::Information, &[390, 768, 1280, 1440][..]),
             (Document::Listing, &[390, 768, 1280, 1440][..]),
             (Document::AgeRating, &[390, 768, 1280, 1440][..]),
+            (Document::Privacy, &[1280][..]),
         ] {
             for &width in widths {
                 let height = if width == 390 {
@@ -251,10 +256,15 @@ fn render_ios_workspace_previews() {
                 ctx.style_mut_of(theme, |style| style.animation_time = 0.0);
 
                 let mut view = IosView::default();
+                let mut details = preview_details();
+                if document == Document::Privacy {
+                    details.info_localizations[1]["privacyPolicyUrl"] = serde_json::Value::Null;
+                    details.age_rating = None;
+                }
                 view.cache.insert(
                     APP_ID.into(),
                     Entry {
-                        data: Some(preview_details()),
+                        data: Some(details),
                         error: None,
                     },
                 );
@@ -262,6 +272,9 @@ fn render_ios_workspace_previews() {
                 let workspace = view.workspaces.entry(APP_ID.into()).or_default();
                 workspace.reconcile(details);
                 workspace.open(document);
+                if document == Document::Privacy {
+                    workspace.filter = "Trust & capabilities".into();
+                }
                 if document == Document::Listing {
                     let source = details.version_localizations[0].get("description");
                     workspace.edit(
@@ -310,6 +323,7 @@ fn render_ios_workspace_previews() {
                     Document::Information => "information",
                     Document::Listing => "listing",
                     Document::AgeRating => "age-rating",
+                    Document::Privacy => "missing-data",
                     _ => unreachable!(),
                 };
                 let path = output_dir.join(format!(

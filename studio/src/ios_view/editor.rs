@@ -31,9 +31,38 @@ pub(super) fn document(
         Document::Listing => listing(ui, workspace, details, palette),
         Document::Privacy => privacy(ui, workspace, details, palette),
         Document::AgeRating => age_rating(ui, details, palette),
+        Document::Review => review(ui, details, palette),
         Document::Versions => versions(ui, details, palette, loading, action),
         Document::Changes => changes(ui, workspace, details, palette),
         document => planned(ui, document, palette),
+    }
+}
+
+fn review(ui: &mut Ui, details: &AppDetails, palette: Palette) {
+    section(ui, "Review Contact", palette);
+    match &details.review_contact {
+        None => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Loading review contact…");
+            });
+        }
+        Some(Err(error)) => {
+            ui.add(Label::new(RichText::new(error).color(palette.error)).wrap());
+        }
+        Some(Ok(None)) => {
+            ui.label("No review contact is available.");
+        }
+        Some(Ok(Some(contact))) => {
+            for (label, field) in [
+                ("First name", "contactFirstName"),
+                ("Last name", "contactLastName"),
+                ("Phone", "contactPhone"),
+                ("Email", "contactEmail"),
+            ] {
+                read_row(ui, label, attr(contact, field), palette);
+            }
+        }
     }
 }
 

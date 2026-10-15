@@ -343,6 +343,64 @@ fn new_apps_without_metadata_or_versions_still_load() {
 }
 
 #[test]
+fn missing_age_rating_is_distinct_from_a_failed_request() {
+    let mut fake = Fake::default();
+    fake.app();
+    fake.response("/apps/123/app-infos?limit=200", json!([{"id": "info"}]));
+    fake.response(
+        "/apps/123/app-infos/info/localizations?limit=200",
+        json!([]),
+    );
+    fake.responses.push_back((
+        "/apps/123/app-infos/info/age-rating".into(),
+        404,
+        Value::Null,
+    ));
+    fake.response("/apps/123/versions?platform=IOS&limit=200", json!([]));
+    let details = load(&mut fake, "123", &AtomicBool::new(false)).unwrap();
+    assert!(details.age_rating.is_none());
+    assert!(details.warnings.is_empty());
+    assert!(fake.responses.is_empty());
+}
+
+#[test]
+fn review_contact_uses_the_selected_version_and_distinguishes_absence_from_errors() {
+    for (status, value, expected) in [
+        (
+            200,
+            json!({"id": "contact", "appId": "123", "versionId": "chosen", "contactEmail": "review@example.com"}),
+            "present",
+        ),
+        (404, Value::Null, "missing"),
+        (403, json!({"detail": "private"}), "error"),
+        (200, json!({"id": "contact", "appId": "other"}), "error"),
+        (200, json!({"id": "contact", "versionId": "other"}), "error"),
+        (200, json!({"contactEmail": "review@example.com"}), "error"),
+    ] {
+        let mut fake = Fake::default();
+        fake.responses.push_back((
+            "/apps/123/versions/chosen/review-contact".into(),
+            status,
+            value,
+        ));
+        let result = load_review_contact(&mut fake, "123", "chosen", &AtomicBool::new(false));
+        match expected {
+            "present" => assert_eq!(
+                result.unwrap().unwrap()["contactEmail"],
+                "review@example.com"
+            ),
+            "missing" => assert!(result.unwrap().is_none()),
+            _ => assert!(!result.unwrap_err().contains("private")),
+        }
+        assert!(fake.responses.is_empty());
+    }
+    let mut fake = Fake::default();
+    assert!(load_review_contact(&mut fake, "123", "chosen", &AtomicBool::new(true)).is_err());
+    assert!(load_review_contact(&mut fake, "123", "../other", &AtomicBool::new(false)).is_err());
+    assert!(fake.requests.is_empty());
+}
+
+#[test]
 fn refuses_repeated_cursors_before_sending_another_request() {
     let path = "/apps/123/app-infos?limit=200";
     let mut fake = Fake::default();

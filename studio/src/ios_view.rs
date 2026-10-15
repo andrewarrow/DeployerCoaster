@@ -17,6 +17,7 @@ use crate::apple::{
 };
 
 mod chrome;
+mod completeness;
 mod documents;
 mod editor;
 
@@ -27,12 +28,12 @@ mod preview;
 #[cfg(test)]
 mod tests;
 
-struct Job {
-    result: Receiver<Result<AppDetails, String>>,
+struct Job<T = AppDetails> {
+    result: Receiver<Result<T, String>>,
     cancelled: Arc<AtomicBool>,
 }
 
-impl Drop for Job {
+impl<T> Drop for Job<T> {
     fn drop(&mut self) {
         self.cancelled.store(true, Ordering::Relaxed);
     }
@@ -50,6 +51,7 @@ pub(crate) struct IosView {
     cache: HashMap<String, Entry>,
     workspaces: HashMap<String, Workspace>,
     job: Option<Job>,
+    review_job: Option<Job<Option<serde_json::Value>>>,
 }
 
 enum Action {
@@ -60,17 +62,40 @@ enum Action {
 impl IosView {
     pub(crate) fn clear_selection(&mut self) {
         self.job = None;
+        self.review_job = None;
         self.selected = None;
     }
 
     fn select(&mut self, app_id: &str) {
         if self.selected.as_deref() != Some(app_id) {
             self.job = None;
+            self.review_job = None;
             self.selected = Some(app_id.to_owned());
         }
     }
 
     fn poll(&mut self) {
+        self.poll_details();
+        let Some(job) = &self.review_job else { return };
+        let result = match job.result.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                Err("Review contact loading stopped. Please refresh again.".into())
+            }
+        };
+        if let Some(details) = self
+            .selected
+            .as_ref()
+            .and_then(|id| self.cache.get_mut(id))
+            .and_then(|entry| entry.data.as_mut())
+        {
+            details.review_contact = Some(result);
+        }
+        self.review_job = None;
+    }
+
+    fn poll_details(&mut self) {
         let Some(job) = &self.job else { return };
         let result = match job.result.try_recv() {
             Ok(result) => result,
@@ -90,7 +115,10 @@ impl IosView {
                     entry.data = Some(details);
                     entry.error = None;
                 }
-                Err(error) => entry.error = Some(error),
+                Err(error) => {
+                    entry.error = Some(error);
+                    self.review_job = None;
+                }
             }
         }
         self.job = None;
@@ -115,6 +143,7 @@ impl IosView {
             result,
             cancelled: cancelled.clone(),
         });
+        self.review_job = None;
         let app_id = app_id.to_owned();
         let ctx = ctx.clone();
         thread::spawn(move || {
@@ -124,6 +153,32 @@ impl IosView {
                 } else {
                     details::load(api, &app_id, &cancelled)
                 }
+            });
+            if !cancelled.load(Ordering::Relaxed) {
+                let _ = sender.send(result);
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    fn start_review(
+        &mut self,
+        app_id: &str,
+        version_id: String,
+        credentials: AppleCredentials,
+        ctx: &egui::Context,
+    ) {
+        let (sender, result) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.review_job = Some(Job {
+            result,
+            cancelled: cancelled.clone(),
+        });
+        let app_id = app_id.to_owned();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let result = ParsequeradeApi::new(credentials).and_then(|api| {
+                details::load_review_contact(api, &app_id, &version_id, &cancelled)
             });
             if !cancelled.load(Ordering::Relaxed) {
                 let _ = sender.send(result);
@@ -152,6 +207,23 @@ impl IosView {
         };
         if !self.cache.contains_key(app_id) && self.job.is_none() {
             self.start(app_id, None, credentials.clone(), ui.ctx());
+        }
+
+        // Resume an interrupted check when returning to cached details, without reloading them.
+        if self.job.is_none()
+            && self.review_job.is_none()
+            && let Some(details) = self
+                .cache
+                .get_mut(app_id)
+                .and_then(|entry| entry.data.as_mut())
+            && details.review_contact.is_none()
+        {
+            if let Some(version) = &details.version {
+                let version_id = attr(version, "id").to_owned();
+                self.start_review(app_id, version_id, credentials.clone(), ui.ctx());
+            } else {
+                details.review_contact = Some(Ok(None));
+            }
         }
 
         let palette = Palette::new(ui.visuals().dark_mode);
@@ -188,7 +260,7 @@ impl IosView {
                     .size_range(220.0..=300.0)
                     .frame(palette.frame(palette.sidebar, Margin::ZERO))
                     .show_collapsible(ui, &mut expanded, |ui| {
-                        chrome::navigator(ui, workspace, name, palette)
+                        chrome::navigator(ui, workspace, details, name, palette)
                     });
                 workspace.navigator = expanded;
             }

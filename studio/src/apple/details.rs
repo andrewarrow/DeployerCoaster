@@ -17,6 +17,7 @@ pub(crate) struct AppDetails {
     pub versions: Vec<Value>,
     pub info_localizations: Vec<Value>,
     pub version_localizations: Vec<Value>,
+    pub review_contact: Option<Result<Option<Value>, String>>,
     pub warnings: Vec<String>,
 }
 
@@ -78,6 +79,47 @@ impl<T: Transport> Reader<'_, T> {
     fn list(&mut self, path: &str) -> Result<Vec<Value>, String> {
         api::list(&mut self.transport, path, self.cancelled)
     }
+
+    fn optional(&mut self, path: &str) -> Result<Option<Value>, String> {
+        if self.cancelled.load(Ordering::Relaxed) {
+            return Err("App detail loading cancelled.".into());
+        }
+        let (status, value) = self.transport.send(Method::GET, path, None)?;
+        match status {
+            200..=299 => Ok(Some(value)),
+            404 => Ok(None),
+            _ => Err(api::api_error(status, &value)),
+        }
+    }
+}
+
+// This extra read runs after the main details have been delivered to the UI.
+pub(crate) fn load_review_contact<T: Transport>(
+    transport: T,
+    app_id: &str,
+    version_id: &str,
+    cancelled: &AtomicBool,
+) -> Result<Option<Value>, String> {
+    validate_id(app_id)?;
+    validate_id(version_id)?;
+    let mut reader = Reader {
+        transport,
+        cancelled,
+    };
+    let contact = reader.optional(&format!(
+        "/apps/{app_id}/versions/{version_id}/review-contact"
+    ))?;
+    if let Some(contact) = &contact {
+        id(contact)?;
+        for (field, expected) in [("appId", app_id), ("versionId", version_id)] {
+            if let Some(owner) = contact.get(field).filter(|value| !value.is_null()) {
+                if owner.as_str() != Some(expected) {
+                    return Err("Parsequerade returned invalid review contact details.".into());
+                }
+            }
+        }
+    }
+    Ok(contact)
 }
 
 pub(crate) fn load<T: Transport>(
@@ -124,8 +166,8 @@ pub(crate) fn load_for_version<T: Transport>(
                     }
                     Err(error) => details.warnings.push(format!("App localizations: {error}")),
                 }
-                match reader.get(&format!("/apps/{app_id}/app-infos/{info_id}/age-rating")) {
-                    Ok(age_rating) => {
+                match reader.optional(&format!("/apps/{app_id}/app-infos/{info_id}/age-rating")) {
+                    Ok(Some(age_rating)) => {
                         let valid = age_rating.is_object()
                             && id(&age_rating).is_ok()
                             && [("appId", app_id), ("appInfoId", info_id)].into_iter().all(
@@ -144,6 +186,7 @@ pub(crate) fn load_for_version<T: Transport>(
                             );
                         }
                     }
+                    Ok(None) => {}
                     Err(error) => details.warnings.push(format!("Age rating: {error}")),
                 }
             }

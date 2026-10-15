@@ -195,6 +195,7 @@ impl Document {
                 | Self::Versions
                 | Self::Privacy
                 | Self::AgeRating
+                | Self::Review
                 | Self::Changes
         )
     }
