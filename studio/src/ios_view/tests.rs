@@ -162,6 +162,55 @@ fn render_document(
     (labels, content_right, view.job.is_none())
 }
 
+#[test]
+fn command_w_closes_only_the_active_tab_and_preserves_edits() {
+    let ctx = egui::Context::default();
+    let credentials = AppleCredentials::test_credentials("test");
+    let mut view = IosView::default();
+    view.cache.insert(
+        "123".into(),
+        Entry {
+            data: Some(fixture()),
+            error: None,
+        },
+    );
+    let workspace = view.workspaces.entry("123".into()).or_default();
+    workspace.open(Document::Listing);
+    workspace.edit(
+        "/apps/123/versions/version-draft/localizations/en-US",
+        "description",
+        None,
+        "Unsaved description".into(),
+        "Description",
+        "Version version-draft",
+    );
+    view.workspaces.insert("456".into(), Workspace::default());
+
+    // Repeated closes keep the final tab, just like its close button.
+    for _ in 0..2 {
+        let _ = run_view_events(
+            &ctx,
+            &mut view,
+            &credentials,
+            1280.0,
+            800.0,
+            vec![egui::Event::Key {
+                key: egui::Key::W,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+        );
+        let workspace = &view.workspaces["123"];
+        assert_eq!(workspace.tabs, vec![Document::Information]);
+        assert_eq!(workspace.active, Document::Information);
+        assert_eq!(workspace.edits.len(), 1);
+        assert_eq!(view.selected.as_deref(), Some("123"));
+        assert_eq!(view.workspaces["456"].tabs.len(), 2);
+    }
+}
+
 fn run_view_events(
     ctx: &egui::Context,
     view: &mut IosView,
