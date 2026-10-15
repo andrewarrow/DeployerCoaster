@@ -25,8 +25,6 @@ pub enum Command {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PendingAction {
-    Open,
     OpenPath(PathBuf),
-    CloseWorkspace,
     Quit,
 }

@@ -1,4 +1,5 @@
 pub(crate) mod api;
+pub(crate) mod catalog;
 pub(crate) mod details;
 mod settings;
 pub use settings::AppleSettings;
@@ -45,26 +46,36 @@ impl AppleCredentials {
     }
 }
 
-#[derive(Deserialize)]
-struct AppleApp {
-    id: String,
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct AppleApp {
+    pub(crate) id: String,
     #[serde(flatten)]
-    attributes: AppAttributes,
+    pub(crate) attributes: AppAttributes,
 }
 
-#[derive(Default, Deserialize)]
+impl AppleApp {
+    pub(crate) fn title(&self) -> &str {
+        if self.attributes.name.is_empty() {
+            &self.id
+        } else {
+            &self.attributes.name
+        }
+    }
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AppAttributes {
+pub(crate) struct AppAttributes {
     #[serde(default)]
-    name: String,
+    pub(crate) name: String,
     #[serde(default)]
-    bundle_id: String,
+    pub(crate) bundle_id: String,
     #[serde(default)]
     sku: String,
 }
 
 struct AppJob {
-    result: Receiver<Result<Vec<AppleApp>, String>>,
+    result: Receiver<Result<catalog::AppList, String>>,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -79,6 +90,7 @@ pub struct AppleStore {
     credentials: Option<AppleCredentials>,
     apps: Vec<AppleApp>,
     loaded: bool,
+    fetched_at: u64,
     job: Option<AppJob>,
     error: Option<String>,
     cancelled: bool,
@@ -89,12 +101,39 @@ pub struct AppleStore {
 }
 
 impl AppleStore {
-    pub(crate) fn app_details_ui(&mut self, ui: &mut egui::Ui, app_id: Option<&str>) {
-        let app = app_id.and_then(|id| self.apps.iter().find(|app| app.id == id));
-        let selection = app.map(|app| (app.id.as_str(), app.attributes.name.as_str()));
-        self.details.ui(ui, selection, self.credentials.as_ref());
-        if app_id.is_some() && app.is_none() {
-            ui.label("The selected app is no longer available. Select an app from the tree.");
+    #[cfg(test)]
+    pub(crate) fn test_apps(apps: Vec<AppleApp>) -> Self {
+        Self {
+            apps,
+            credentials: Some(AppleCredentials::test_credentials("picker-tests")),
+            loaded: true,
+            fetched_at: catalog::now(),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn selected_app_ui(&mut self, ui: &mut egui::Ui, app: &AppleApp) {
+        self.details
+            .ui(ui, Some((&app.id, app.title())), self.credentials.as_ref());
+    }
+
+    pub(crate) fn selection_account(&self) -> Option<String> {
+        self.credentials.as_ref().map(catalog::account_key)
+    }
+
+    pub(crate) fn picker_apps(&self) -> &[AppleApp] {
+        &self.apps
+    }
+
+    pub(crate) fn prepare_app_list(&mut self, ctx: &egui::Context) {
+        self.poll();
+        if self.credentials.is_some()
+            && (!self.loaded || !catalog::is_fresh(self.fetched_at, catalog::now()))
+            && !self.cancelled
+            && self.job.is_none()
+            && self.error.is_none()
+        {
+            self.start(ctx, false);
         }
     }
 
@@ -151,7 +190,7 @@ impl AppleStore {
             && self.job.is_none()
             && self.error.is_none()
         {
-            self.start(ctx);
+            self.start(ctx, false);
         }
         if self.loaded && self.job.is_none() && self.icons.needs_start() {
             self.icons.ensure_started(
@@ -173,7 +212,7 @@ impl AppleStore {
     pub(crate) fn refresh_dashboard(&mut self, ctx: &egui::Context) {
         if self.credentials.is_some() {
             self.icons.refresh();
-            self.start(ctx);
+            self.start(ctx, true);
         }
     }
 
@@ -194,8 +233,9 @@ impl AppleStore {
     pub(crate) fn poll(&mut self) {
         let Some(job) = &self.job else { return };
         match job.result.try_recv() {
-            Ok(Ok(apps)) => {
-                self.apps = apps;
+            Ok(Ok(list)) => {
+                self.apps = list.apps;
+                self.fetched_at = list.fetched_at;
                 self.loaded = true;
                 self.job = None;
             }
@@ -257,7 +297,7 @@ impl AppleStore {
                 .clicked();
         }
         if !self.loaded && !self.cancelled && self.job.is_none() && self.error.is_none() {
-            self.start(ui.ctx());
+            self.start(ui.ctx(), false);
         }
         let mut settings = false;
         ui.horizontal_wrapped(|ui| {
@@ -269,7 +309,7 @@ impl AppleStore {
                 .clicked()
             {
                 self.icons.refresh();
-                self.start(ui.ctx());
+                self.start(ui.ctx(), true);
             }
             settings = ui
                 .add(egui::Button::new("Apple settings…").min_size(egui::vec2(140.0, 44.0)))
@@ -372,7 +412,7 @@ impl AppleStore {
         settings
     }
 
-    fn start(&mut self, ctx: &egui::Context) {
+    fn start(&mut self, ctx: &egui::Context, refresh: bool) {
         let Some(credentials) = self.credentials.clone() else {
             return;
         };
@@ -387,8 +427,11 @@ impl AppleStore {
         let cancellation = cancelled.clone();
         self.job = Some(AppJob { result, cancelled });
         thread::spawn(move || {
-            let result = api::ParsequeradeApi::new(credentials)
-                .and_then(|mut api| list_apps(&mut api, &cancellation));
+            let path = catalog::cache_path(&credentials);
+            let result = catalog::load_or_fetch(path.as_deref(), catalog::now(), refresh, || {
+                api::ParsequeradeApi::new(credentials)
+                    .and_then(|mut api| list_apps(&mut api, &cancellation))
+            });
             if !cancellation.load(Ordering::Relaxed) {
                 let _ = sender.send(result);
                 ctx.request_repaint();

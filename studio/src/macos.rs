@@ -50,6 +50,7 @@ const SALES: isize = 21;
 #[derive(Clone, Copy, Default)]
 pub(crate) struct MenuState {
     pub has_workspace: bool,
+    pub has_selected_app: bool,
     pub has_pending_action: bool,
     pub show_sidebar: bool,
     pub show_inspector: bool,
@@ -73,7 +74,7 @@ thread_local! {
     static TARGET: OnceCell<Retained<MenuTarget>> = const { OnceCell::new() };
     static ACTIONS: RefCell<VecDeque<MenuAction>> = const { RefCell::new(VecDeque::new()) };
     static PROXY: RefCell<Option<EventLoopProxy<Instant>>> = const { RefCell::new(None) };
-    static MENU_STATE: std::cell::Cell<MenuState> = const { std::cell::Cell::new(MenuState { has_workspace: false, has_pending_action: false, show_sidebar: false, show_inspector: false, show_activity: false }) };
+    static MENU_STATE: std::cell::Cell<MenuState> = const { std::cell::Cell::new(MenuState { has_workspace: false, has_selected_app: false, has_pending_action: false, show_sidebar: false, show_inspector: false, show_activity: false }) };
     static EDITABLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -88,7 +89,8 @@ objc2::define_class!(
         fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
             let state = MENU_STATE.with(std::cell::Cell::get);
             match item.tag() {
-                SAVE | SAVE_AS | CLOSE_WORKSPACE => state.has_workspace && !state.has_pending_action,
+                SAVE | SAVE_AS => state.has_workspace && !state.has_pending_action,
+                CLOSE_WORKSPACE => state.has_selected_app && !state.has_pending_action,
                 OPEN | QUIT => !state.has_pending_action,
                 UNDO | REDO | CUT | COPY | PASTE | SELECT_ALL => EDITABLE.with(std::cell::Cell::get),
                 ABOUT | SETTINGS | SIDEBAR | INSPECTOR | ACTIVITY => true,
@@ -228,7 +230,7 @@ pub(crate) fn install_native_menu(proxy: EventLoopProxy<Instant>) {
         menu_item(
             mtm,
             target_obj,
-            "Open…",
+            "Open App…",
             "o",
             OPEN,
             NSEventModifierFlags::Command,
@@ -263,7 +265,7 @@ pub(crate) fn install_native_menu(proxy: EventLoopProxy<Instant>) {
         menu_item(
             mtm,
             target_obj,
-            "Close Workspace",
+            "Close App",
             "w",
             CLOSE_WORKSPACE,
             NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
@@ -593,7 +595,7 @@ pub(crate) fn update_menu_state(state: MenuState, wants_keyboard_input: bool) {
         checked(
             &menu,
             CLOSE_WORKSPACE,
-            state.has_workspace && !state.has_pending_action,
+            state.has_selected_app && !state.has_pending_action,
             None,
         );
         checked(&menu, OPEN, !state.has_pending_action, None);

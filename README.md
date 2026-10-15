@@ -15,6 +15,14 @@ desktop installed based software for developers to help with app store connect, 
 
 Run the desktop studio with `cargo run --manifest-path studio/Cargo.toml`.
 
+Studio starts with **Open App**, **Create New**, and **Recent Apps**. Open App
+lists the iOS apps available through your saved Parsequerade connection; connect
+in **Settings → Apple** if needed. The list is cached on disk for 24 hours.
+Selecting an app opens its information without a navigation tree and remembers
+it locally for next time. The cache and the ten most recent apps are scoped to
+the Apple account. **File → Close App** returns to the startup screen;
+**File → Open App** lets you choose another app. Create New is a no-op for now.
+
 Open **Analytics** for daily and monthly App Store sales reports, or an app's
 **Analytics** tab for its reports. In **Settings → Apple**, save your App Store
 Connect Team Key credentials and vendor number (found in Payments and Financial
@@ -24,7 +32,7 @@ redownload, and country breakdowns. Reports are cached locally by account, vendo
 and period; **Refresh** downloads revisions. Monthly reports default to the previous
 month, and daily reports to yesterday.
 
-The empty window has a **Connect Play Store** button. It opens Google sign-in in
+Open **File → Android** and choose **Connect Play Store**. It opens Google sign-in in
 your default browser, receives the authorization through a local loopback callback,
 and lists the account's accessible apps by title and package name. Refresh reloads
 the list; Disconnect clears the session. Access and refresh tokens stay in memory

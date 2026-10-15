@@ -3,7 +3,6 @@
     windows_subsystem = "windows"
 )]
 
-mod android_view;
 mod app;
 mod app_icons;
 mod apple;

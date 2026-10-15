@@ -148,8 +148,9 @@ impl App {
             self.command(command);
         }
         self.apple_store.set_credentials(self.apple.credentials());
-        self.studio_view
-            .ui(ui, &mut self.apple_store, &mut self.play_store);
+        if let Some(command) = self.studio_view.ui(ui, &mut self.apple_store) {
+            self.command(command);
+        }
         self.about_window(&ctx);
         self.discard_modal(&ctx);
     }
@@ -310,11 +311,14 @@ impl App {
 
     pub fn command(&mut self, command: Command) {
         match command {
-            Command::OpenWorkspace => self.request_action(PendingAction::Open),
+            Command::OpenWorkspace => self.studio_view.open(),
             Command::OpenPath(path) => self.request_action(PendingAction::OpenPath(path)),
             Command::Save => self.save(),
             Command::SaveAs => self.save_as(),
-            Command::CloseWorkspace => self.request_action(PendingAction::CloseWorkspace),
+            Command::CloseWorkspace => {
+                self.studio_view.close();
+                self.apple_store.clear_app_details_selection();
+            }
             Command::Quit => self.request_action(PendingAction::Quit),
             Command::Settings => {
                 self.settings_section = SettingsSection::General;
@@ -443,7 +447,7 @@ impl App {
                         }
                     }
                     ui.separator();
-                    if ui.button("Open…").clicked() {
+                    if ui.button("Open App…").clicked() {
                         selected_command = Some(Command::OpenWorkspace);
                         ui.close();
                     }
@@ -464,8 +468,8 @@ impl App {
                     }
                     if ui
                         .add_enabled(
-                            self.workspace.is_some(),
-                            egui::Button::new("Close Workspace"),
+                            self.studio_view.selected_title().is_some(),
+                            egui::Button::new("Close App"),
                         )
                         .clicked()
                     {
@@ -530,6 +534,7 @@ impl App {
     pub fn native_menu_state(&self) -> crate::macos::MenuState {
         crate::macos::MenuState {
             has_workspace: self.workspace.is_some(),
+            has_selected_app: self.studio_view.selected_title().is_some(),
             has_pending_action: self.pending_action.is_some(),
             show_sidebar: self.preferences.show_sidebar,
             show_inspector: self.preferences.show_inspector,
@@ -538,6 +543,9 @@ impl App {
     }
 
     pub fn title(&self) -> String {
+        if let Some(name) = self.studio_view.selected_title() {
+            return format!("{name} — {}", metadata::APP_NAME);
+        }
         let workspace = self.workspace.as_ref().map(|workspace| {
             let dirty = if workspace.is_dirty() { " *" } else { "" };
             format!("{}{}", workspace.document.name, dirty)
@@ -584,23 +592,8 @@ impl App {
         self.status = None;
         self.status_is_error = false;
         match action {
-            PendingAction::Open => self.open_dialog(),
             PendingAction::OpenPath(path) => self.open_path(path),
-            PendingAction::CloseWorkspace => {
-                self.codex.return_to_workspace();
-                self.workspace = None;
-                self.set_status("Workspace closed");
-            }
             PendingAction::Quit => self.quit = true,
-        }
-    }
-
-    fn open_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("DeployerCoaster workspace", &[WORKSPACE_EXTENSION])
-            .pick_file()
-        {
-            self.open_path(path);
         }
     }
 
@@ -827,8 +820,7 @@ impl App {
             return;
         };
         let action_label = match action {
-            PendingAction::Open | PendingAction::OpenPath(_) => "open another workspace",
-            PendingAction::CloseWorkspace => "close this workspace",
+            PendingAction::OpenPath(_) => "open another workspace",
             PendingAction::Quit => "quit",
         };
         let response = egui::Modal::new(egui::Id::new("discard_changes_modal")).show(ctx, |ui| {
@@ -999,15 +991,12 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_dirty_replacement_keeps_workspace() {
+    fn opening_app_picker_preserves_unsaved_workspace_without_a_file_dialog() {
         let mut workspace = Workspace::new();
         workspace.document.name = "Keep this workspace".to_owned();
         let mut app = app_with_workspace(workspace);
 
         app.command(Command::OpenWorkspace);
-        assert_eq!(app.pending_action, Some(PendingAction::Open));
-        app.command(Command::CancelPending);
-
         assert!(app.pending_action.is_none());
         assert_eq!(
             app.workspace.as_ref().unwrap().document.name,
