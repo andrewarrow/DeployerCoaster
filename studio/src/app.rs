@@ -88,6 +88,7 @@ pub struct App {
     studio_view: crate::studio_view::StudioView,
     documents: Vec<AppDocument>,
     next_document_id: u64,
+    age_rating_clipboard: crate::ios_view::AgeRatingClipboard,
     dashboard: crate::dashboard::Dashboard,
     codex: crate::codex_ui::Codex,
     codex_default_root: PathBuf,
@@ -128,6 +129,7 @@ impl App {
             studio_view: crate::studio_view::StudioView::default(),
             documents: Vec::new(),
             next_document_id: 0,
+            age_rating_clipboard: Default::default(),
             dashboard: crate::dashboard::Dashboard::load(),
             codex: crate::codex_ui::Codex::new(codex_root),
             codex_default_root,
@@ -218,7 +220,9 @@ impl App {
                 id,
                 app,
                 account,
-                view: crate::ios_view::IosView::default(),
+                view: crate::ios_view::IosView::with_age_rating_clipboard(
+                    self.age_rating_clipboard.clone(),
+                ),
             });
             id
         };
@@ -495,7 +499,7 @@ impl App {
                 .frame(egui::Frame::new().fill(ui.visuals().panel_fill))
                 .show(ui, |ui| {
                     if document.account != account {
-                        document.view = crate::ios_view::IosView::default();
+                        document.view = crate::ios_view::IosView::with_age_rating_clipboard(self.age_rating_clipboard.clone());
                         if crate::native_titlebar_active(ui.ctx()) {
                             ui.add_space(44.0);
                         }
@@ -998,6 +1002,7 @@ mod tests {
             studio_view: crate::studio_view::StudioView::default(),
             documents: Vec::new(),
             next_document_id: 0,
+            age_rating_clipboard: Default::default(),
             dashboard: crate::dashboard::Dashboard::default(),
             codex: crate::codex_ui::Codex::test_disconnected(std::env::current_dir().unwrap()),
             codex_default_root: std::env::current_dir().unwrap(),

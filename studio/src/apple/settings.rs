@@ -253,7 +253,7 @@ impl AppleSettings {
         self.poll(ui.ctx());
         ui.label(egui::RichText::new("App Store Connect").strong());
         if self.saved_credentials.is_some() {
-            ui.label("Saved Parsequerade connection · read-only app listings and metadata.");
+            ui.label("Saved Parsequerade connection.");
         } else if self.job_kind == Some(JobKind::ValidateSaved) {
             ui.label("Checking saved connection details…");
         } else if self.job_kind.is_some() {
@@ -268,7 +268,7 @@ impl AppleSettings {
             "https://appstoreconnect.apple.com/access/integrations/api",
         );
         ui.add(egui::Label::new(
-            "Your Apple key is sent securely to Parsequerade, which stores the connection for read-only access.",
+            "Your Apple key is sent securely to Parsequerade, which stores the connection to read app metadata and paste age-rating settings.",
         ).wrap());
         if self.saved_credentials.is_some()
             && !self.editing_connection

@@ -62,7 +62,7 @@ fn exchanges_apple_key_for_validated_facade_credentials() {
     assert!(!headers.to_lowercase().contains("authorization:"));
     assert_eq!(
         body,
-        json!({"issuerId":"issuer", "keyId":"key", "privateKey":"private PEM"})
+        json!({"issuerId":"issuer", "keyId":"key", "privateKey":"private PEM", "capabilities":["read", "write"]})
     );
     let encoded = serde_json::to_string(&result).unwrap();
     assert!(!encoded.contains("private PEM"));
@@ -110,7 +110,7 @@ fn sends_facade_key_to_connection_scoped_resource_without_apple_envelopes() {
     assert!(
         api.send(Method::PATCH, "/apps/123", Some(&json!({})))
             .unwrap_err()
-            .contains("read-only")
+            .contains("Only age-rating")
     );
 }
 
@@ -288,5 +288,46 @@ fn credential_errors_explain_reconnection_and_never_expose_upstream_details() {
         assert!(error.contains("reconnect"));
         assert!(error.contains("Issuer ID"));
         assert!(!error.contains("private upstream detail"));
+    }
+}
+
+#[test]
+fn age_rating_post_sends_flat_json_and_other_writes_stay_unavailable() {
+    let values = json!({"advertising":false, "kidsAgeBand":null});
+    let (endpoint, task) = server(
+        "200 OK",
+        json!({"id":"rating", "appId":"456", "appInfoId":"info"}),
+    );
+    let mut credentials = AppleCredentials::test_credentials("conn_example");
+    credentials.base_url = format!("{endpoint}/v1/connections/conn_example");
+    let mut api = ParsequeradeApi {
+        http: Client::new(),
+        credentials,
+    };
+    let (status, _) = api
+        .send(
+            Method::POST,
+            "/apps/456/app-infos/info/age-rating",
+            Some(&values),
+        )
+        .unwrap();
+    assert_eq!(status, 200);
+    let (headers, body) = task.join().unwrap();
+    assert!(
+        headers
+            .starts_with("POST /v1/connections/conn_example/apps/456/app-infos/info/age-rating ")
+    );
+    assert!(
+        headers
+            .to_lowercase()
+            .contains("authorization: bearer pq_test-key")
+    );
+    assert_eq!(body, values);
+    for path in [
+        "/apps/456",
+        "/apps/456/app-infos/info/localizations/en-US",
+        "/apps/456/app-infos/info/age-rating?x=1",
+    ] {
+        assert!(api.send(Method::POST, path, Some(&values)).is_err());
     }
 }

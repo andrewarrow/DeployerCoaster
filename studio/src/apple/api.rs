@@ -77,7 +77,8 @@ fn create_connection_with(
     private_key: &str,
 ) -> Result<AppleCredentials, String> {
     let response = http.post(endpoint).json(&json!({
-        "issuerId": issuer, "keyId": key_id, "privateKey": private_key
+        "issuerId": issuer, "keyId": key_id, "privateKey": private_key,
+        "capabilities": ["read", "write"]
     })).send().map_err(|_| "Could not reach Parsequerade to connect your Apple key. Check your connection and retry.".to_owned())?;
     let status = response.status().as_u16();
     let value = read_response(response)?;
@@ -122,30 +123,55 @@ impl Transport for ParsequeradeApi {
         path: &str,
         body: Option<&Value>,
     ) -> Result<(u16, Value), String> {
-        if method != Method::GET || body.is_some() {
+        let age_write = method == Method::POST && is_age_rating_path(path) && body.is_some();
+        if !age_write && (method != Method::GET || body.is_some()) {
             return Err(
-                "Parsequerade currently supports read-only access. Writes are unavailable.".into(),
+                "Only age-rating paste is supported for writes through Parsequerade.".into(),
             );
         }
         let url = resource_url(&self.credentials.base_url, path)?;
-        log::debug!(target: "parsequerade", "GET {path}");
-        let response = self
+        log::debug!(target: "parsequerade", "{method} {path}");
+        let mut request = self
             .http
-            .get(url)
+            .request(method.clone(), url)
             .bearer_auth(&self.credentials.api_key)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .send()
-            .map_err(|_| {
-                log::debug!(target: "parsequerade", "GET {path}: request failed");
+            .header(reqwest::header::ACCEPT, "application/json");
+        if let Some(body) = body {
+            request = request.json(body);
+        }
+        let response = request.send().map_err(|_| {
+            log::debug!(target: "parsequerade", "{method} {path}: request failed");
+            if age_write {
+                "The paste result could not be confirmed. Refresh Age Rating before trying again."
+                    .to_owned()
+            } else {
                 "Could not reach Parsequerade. Check your connection and try again.".to_owned()
-            })?;
-        let status = response.status().as_u16();
-        let value = read_response(response).inspect_err(|error| {
-            log::debug!(target: "parsequerade", "GET {path} -> HTTP {status}: {error}");
+            }
         })?;
-        log::debug!(target: "parsequerade", "GET {path} -> HTTP {status}\n{value:#}");
+        let status = response.status().as_u16();
+        let value = read_response(response).map_err(|error| {
+            log::debug!(target: "parsequerade", "{method} {path} -> HTTP {status}: {error}");
+            if age_write {
+                "The paste result could not be confirmed. Refresh Age Rating before trying again."
+                    .to_owned()
+            } else {
+                error
+            }
+        })?;
+        log::debug!(target: "parsequerade", "{method} {path} -> HTTP {status}");
         Ok((status, value))
     }
+}
+
+fn is_age_rating_path(path: &str) -> bool {
+    let parts: Vec<_> = path.split('/').collect();
+    parts.len() == 6
+        && parts[0].is_empty()
+        && parts[1] == "apps"
+        && validate_id(parts[2]).is_ok()
+        && parts[3] == "app-infos"
+        && validate_id(parts[4]).is_ok()
+        && parts[5] == "age-rating"
 }
 
 fn read_response(response: reqwest::blocking::Response) -> Result<Value, String> {
@@ -167,6 +193,8 @@ pub(crate) fn api_error(status: u16, value: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or_default();
     match (status, code) {
+        (_, "write_forbidden") => "This connection is read-only. Replace the connection in Apple settings to enable age-rating paste.",
+        (_, "write_outcome_unknown") => "The paste result could not be confirmed. Refresh Age Rating before trying again.",
         (_, "invalid_credentials") | (_, "upstream_authentication_failed") => "Apple rejected the connection credentials. Check the Issuer ID, Key ID, and .p8 key, then reconnect in Apple settings.",
         (_, "invalid_cursor") => {
             "This page cursor expired. Refresh to load the latest information."

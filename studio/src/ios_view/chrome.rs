@@ -663,7 +663,16 @@ fn inspector_contents(
     }
     ui.add_space(14.0);
     inspector_section(ui, "Connection", palette);
-    inspector_value(ui, "Access", "Read only", palette);
+    inspector_value(
+        ui,
+        "Access",
+        if workspace.active == Document::AgeRating {
+            "Age rating paste"
+        } else {
+            "Read only"
+        },
+        palette,
+    );
 }
 
 fn inspector_section(ui: &mut Ui, label: &str, palette: Palette) {
@@ -714,9 +723,15 @@ pub(super) fn status(
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.label(
-                RichText::new(if loading { "Syncing…" } else { "Read only" })
-                    .size(11.0)
-                    .color(palette.muted),
+                RichText::new(if loading {
+                    "Syncing…"
+                } else if workspace.active == Document::AgeRating {
+                    "Age rating paste"
+                } else {
+                    "Read only"
+                })
+                .size(11.0)
+                .color(palette.muted),
             );
             if ui.available_width() > 150.0
                 && let Some(details) = details

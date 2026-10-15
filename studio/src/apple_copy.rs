@@ -36,7 +36,7 @@ impl AppCopy {
         _credentials: Option<&crate::apple::AppleCredentials>,
     ) {
         response.context_menu(|ui| {
-            let reason = "Copy and paste are unavailable because Parsequerade is read-only.";
+            let reason = "Whole-app copy and paste are unavailable. Copy Age Rating from its tab.";
             ui.add_enabled(false, egui::Button::new("Copy App"))
                 .on_disabled_hover_text(reason);
             ui.add_enabled(false, egui::Button::new("Paste"))
@@ -104,7 +104,7 @@ impl AppCopy {
         _credentials: Option<&AppleCredentials>,
     ) {
         response.context_menu(|ui| {
-            let reason = "Copy and paste are unavailable because Parsequerade is read-only.";
+            let reason = "Whole-app copy and paste are unavailable. Copy Age Rating from its tab.";
             ui.add_enabled(false, egui::Button::new("Copy App"))
                 .on_disabled_hover_text(reason);
             ui.add_enabled(false, egui::Button::new("Paste"))

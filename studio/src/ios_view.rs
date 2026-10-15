@@ -16,6 +16,7 @@ use crate::apple::{
     details::{self, AppDetails, attr},
 };
 
+mod age_copy;
 mod chrome;
 mod completeness;
 mod documents;
@@ -27,6 +28,10 @@ use documents::{Document, Workspace};
 mod preview;
 #[cfg(test)]
 mod tests;
+
+// App document windows have independent egui contexts and views. Keep one typed
+// clipboard in App so a section copied in one window is available in another.
+pub(crate) type AgeRatingClipboard = std::rc::Rc<std::cell::RefCell<Option<serde_json::Value>>>;
 
 struct Job<T = AppDetails> {
     result: Receiver<Result<T, String>>,
@@ -52,6 +57,7 @@ pub(crate) struct IosView {
     workspaces: HashMap<String, Workspace>,
     job: Option<Job>,
     review_job: Option<Job<Option<serde_json::Value>>>,
+    age_copy: age_copy::AgeCopy,
 }
 
 enum Action {
@@ -60,6 +66,13 @@ enum Action {
 }
 
 impl IosView {
+    pub(crate) fn with_age_rating_clipboard(clipboard: AgeRatingClipboard) -> Self {
+        Self {
+            age_copy: age_copy::AgeCopy::with_clipboard(clipboard),
+            ..Default::default()
+        }
+    }
+
     pub(crate) fn clear_selection(&mut self) {
         self.job = None;
         self.review_job = None;
@@ -131,7 +144,7 @@ impl IosView {
         credentials: AppleCredentials,
         ctx: &egui::Context,
     ) {
-        if self.job.is_some() {
+        if self.job.is_some() || self.age_copy.pasting(app_id) {
             return;
         }
         if let Some(entry) = self.cache.get_mut(app_id) {
@@ -193,6 +206,7 @@ impl IosView {
         selection: Option<(&str, &str)>,
         credentials: Option<&AppleCredentials>,
     ) {
+        self.age_copy.poll(&mut self.cache);
         let Some((app_id, name)) = selection else {
             self.clear_selection();
             return;
@@ -227,7 +241,7 @@ impl IosView {
         }
 
         let palette = Palette::new(ui.visuals().dark_mode);
-        let loading = self.job.is_some();
+        let loading = self.job.is_some() || self.age_copy.pasting(app_id);
         let entry = self.cache.get(app_id);
         let details = entry.and_then(|entry| entry.data.as_ref());
         let workspace = self.workspaces.entry(app_id.into()).or_default();
@@ -280,6 +294,15 @@ impl IosView {
                 .show(ui, |ui| {
                     chrome::tabs(ui, workspace, palette);
                     chrome::jump_bar(ui, workspace, details, palette);
+                    // Register the background before child controls so their text menus
+                    // keep priority, while empty margins and the full viewport accept a menu.
+                    let background = (workspace.active == Document::AgeRating).then(|| {
+                        ui.interact(
+                            ui.available_rect_before_wrap(),
+                            ui.id().with("age_rating_background"),
+                            egui::Sense::click(),
+                        )
+                    });
                     egui::ScrollArea::vertical()
                         .id_salt(("document", workspace.active, &workspace.locale))
                         .auto_shrink([false, false])
@@ -289,6 +312,9 @@ impl IosView {
                                 .inner_margin(Margin::symmetric(margin, 18))
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width().min(760.0));
+                                    if workspace.active == Document::AgeRating {
+                                        self.age_copy.feedback(ui, app_id, palette);
+                                    }
                                     if let Some(error) =
                                         entry.and_then(|entry| entry.error.as_deref())
                                     {
@@ -333,6 +359,15 @@ impl IosView {
                                     }
                                 });
                         });
+                    if let Some(background) = background {
+                        self.age_copy.context_menu(
+                            &background,
+                            app_id,
+                            details,
+                            loading,
+                            credentials,
+                        );
+                    }
                 });
         });
         if let Some(action) = action {

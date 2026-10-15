@@ -2,7 +2,7 @@ use super::*;
 use egui::{Frame, Margin, Pos2, Rect, Shape, vec2};
 use serde_json::{Value, json};
 
-fn fixture() -> AppDetails {
+pub(super) fn fixture() -> AppDetails {
     AppDetails {
         app: json!({"id": "123", "name": "A long application name for layout testing", "bundleId": "com.example.this.is.a.deliberately.long.bundle.identifier.with.several.segments.to.check.wrapping.behavior", "sku": "example", "primaryLocale": "en-US", "contentRightsDeclaration": "DOES_NOT_USE_THIRD_PARTY_CONTENT"}),
         info: Some(
@@ -1019,4 +1019,74 @@ fn refreshed_source_preserves_a_draft_and_marks_it_as_changed_in_changes() {
     assert!(labels.contains(&"Current source"));
     assert!(labels.contains(&"A newly refreshed server value"));
     assert_eq!(view.workspaces["123"].edits.len(), 1);
+}
+
+#[test]
+fn age_rating_empty_background_menu_copies_only_this_section_at_all_sizes() {
+    for (width, height) in [
+        (390.0, 844.0),
+        (768.0, 1024.0),
+        (1280.0, 800.0),
+        (1440.0, 900.0),
+    ] {
+        let ctx = egui::Context::default();
+        crate::style::configure(&ctx);
+        let credentials = AppleCredentials::test_credentials("test");
+        let clipboard = AgeRatingClipboard::default();
+        let mut view = IosView::with_age_rating_clipboard(clipboard.clone());
+        view.cache.insert(
+            "123".into(),
+            Entry {
+                data: Some(fixture()),
+                error: None,
+            },
+        );
+        view.workspaces
+            .entry("123".into())
+            .or_default()
+            .open(Document::AgeRating);
+        for _ in 0..2 {
+            run_view_events(&ctx, &mut view, &credentials, width, height, vec![]);
+        }
+        // Left margin is blank throughout the scroll viewport, even on narrow windows.
+        let pos = Pos2::new(if width >= 700.0 { 246.0 } else { 5.0 }, 250.0);
+        for pressed in [true, false] {
+            run_view_events(
+                &ctx,
+                &mut view,
+                &credentials,
+                width,
+                height,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        let menu = run_view_events(&ctx, &mut view, &credentials, width, height, vec![]);
+        let labels = texts(&menu);
+        assert!(labels.contains(&"Copy"), "no Copy at {width}");
+        assert!(labels.contains(&"Paste"), "no Paste at {width}");
+        assert!(!labels.contains(&"Copy App"));
+        let copy = text_center(&menu, "Copy");
+        click_view_at(&ctx, &mut view, &credentials, width, height, copy);
+        let output = run_view_events(&ctx, &mut view, &credentials, width, height, vec![]);
+        assert!(
+            texts(&output).contains(&"Age rating copied."),
+            "copy failed at {width}"
+        );
+        assert!(view.job.is_none());
+        assert_eq!(clipboard.borrow().as_ref().unwrap()["advertising"], false);
+        assert!(clipboard.borrow().as_ref().unwrap().get("id").is_none());
+        drop(view);
+        // The source window may close before the destination window is opened.
+        let destination = IosView::with_age_rating_clipboard(clipboard.clone());
+        assert!(clipboard.borrow().is_some());
+        drop(destination);
+    }
 }
