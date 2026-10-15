@@ -409,6 +409,17 @@ impl ApplicationHandler<Instant> for Desktop {
                         }
                     }
                 }
+                macos::MenuAction::CloseTab => {
+                    if !self.app.native_menu_state().has_pending_action
+                        && let Some(desktop) = self
+                            .windows
+                            .iter_mut()
+                            .find(|window| window.window.has_focus())
+                    {
+                        push_shortcut(&mut desktop.input, egui::Key::W, false);
+                        desktop.window.request_redraw();
+                    }
+                }
                 macos::MenuAction::Edit(edit) => {
                     if let Some(desktop) = self
                         .windows

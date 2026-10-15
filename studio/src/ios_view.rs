@@ -159,6 +159,9 @@ impl IosView {
         let entry = self.cache.get(app_id);
         let details = entry.and_then(|entry| entry.data.as_ref());
         let workspace = self.workspaces.entry(app_id.into()).or_default();
+        if ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::W)) {
+            workspace.close(workspace.active);
+        }
         if let Some(details) = details {
             workspace.reconcile(details);
         }

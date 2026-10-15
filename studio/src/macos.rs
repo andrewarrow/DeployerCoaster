@@ -168,6 +168,7 @@ const ANDROID: isize = 18;
 const APPLE: isize = 19;
 const WIZARD: isize = 20;
 const SALES: isize = 21;
+const CLOSE_TAB: isize = 22;
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct MenuState {
@@ -181,6 +182,7 @@ pub(crate) struct MenuState {
 
 pub(crate) enum MenuAction {
     Command(Command),
+    CloseTab,
     Edit(EditAction),
 }
 pub(crate) enum EditAction {
@@ -213,7 +215,7 @@ objc2::define_class!(
             match item.tag() {
                 SAVE | SAVE_AS => state.has_workspace && !state.has_pending_action,
                 CLOSE_WORKSPACE => state.has_selected_app && !state.has_pending_action,
-                OPEN | QUIT => !state.has_pending_action,
+                OPEN | QUIT | CLOSE_TAB => !state.has_pending_action,
                 UNDO | REDO | CUT | COPY | PASTE | SELECT_ALL => EDITABLE.with(std::cell::Cell::get),
                 ABOUT | SETTINGS | SIDEBAR | INSPECTOR | ACTIVITY => true,
                 _ => true,
@@ -233,6 +235,7 @@ objc2::define_class!(
                 SAVE => Some(MenuAction::Command(Command::Save)),
                 SAVE_AS => Some(MenuAction::Command(Command::SaveAs)),
                 CLOSE_WORKSPACE => Some(MenuAction::Command(Command::CloseWorkspace)),
+                CLOSE_TAB => Some(MenuAction::CloseTab),
                 QUIT => Some(MenuAction::Command(Command::Quit)),
                 SIDEBAR => Some(MenuAction::Command(Command::ToggleSidebar)),
                 INSPECTOR => Some(MenuAction::Command(Command::ToggleInspector)),
@@ -387,6 +390,17 @@ pub(crate) fn install_native_menu(proxy: EventLoopProxy<Instant>) {
         menu_item(
             mtm,
             target_obj,
+            "Close Tab",
+            "w",
+            CLOSE_TAB,
+            NSEventModifierFlags::Command,
+        ),
+    );
+    add(
+        &file,
+        menu_item(
+            mtm,
+            target_obj,
             "Close App",
             "w",
             CLOSE_WORKSPACE,
@@ -398,7 +412,7 @@ pub(crate) fn install_native_menu(proxy: EventLoopProxy<Instant>) {
         standard_item(
             mtm,
             "Close Window",
-            "w",
+            "",
             sel!(performClose:),
             NSEventModifierFlags::Command,
         ),
@@ -721,6 +735,7 @@ pub(crate) fn update_menu_state(state: MenuState, wants_keyboard_input: bool) {
             None,
         );
         checked(&menu, OPEN, !state.has_pending_action, None);
+        checked(&menu, CLOSE_TAB, !state.has_pending_action, None);
         checked(&menu, QUIT, !state.has_pending_action, None);
         checked(&menu, SIDEBAR, true, Some(state.show_sidebar));
         checked(&menu, INSPECTOR, true, Some(state.show_inspector));
