@@ -161,6 +161,7 @@ pub(crate) fn api_error(status: u16, value: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or_default();
     match (status, code) {
+        (_, "invalid_credentials") | (_, "upstream_authentication_failed") => "Apple rejected the connection credentials. Check the Issuer ID, Key ID, and .p8 key, then reconnect in Apple settings.",
         (_, "invalid_cursor") => {
             "This page cursor expired. Refresh to load the latest information."
         }

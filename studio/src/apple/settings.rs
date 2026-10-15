@@ -45,6 +45,8 @@ pub struct AppleSettings {
     #[serde(skip)]
     migration_attempted: bool,
     #[serde(skip)]
+    legacy_migration_pending: bool,
+    #[serde(skip)]
     saved_validation_attempted: bool,
     #[serde(skip)]
     pending_save: Option<AppleCredentials>,
@@ -68,13 +70,19 @@ impl AppleSettings {
                 Err(_) => Err("Could not read Apple settings.".to_owned()),
             }
         })();
-        let mut settings = result.unwrap_or_else(|error| Self {
+        let settings = result.unwrap_or_else(|error| Self {
             feedback: Some(error),
             error: true,
             ..Self::default()
         });
+        Self::finish_loading(settings)
+    }
+
+    fn finish_loading(mut settings: Self) -> Self {
         settings.saved_vendor_number = settings.vendor_number.trim().to_owned();
         settings.saved_credentials = None;
+        settings.legacy_migration_pending =
+            settings.connection.is_none() && settings.has_legacy_credentials();
         settings
     }
 
@@ -95,7 +103,22 @@ impl AppleSettings {
     where
         F: FnOnce(&Self) -> Result<(), String>,
     {
+        self.poll_with_save_and_migration(ctx, save, |settings, ctx| {
+            settings.start_create(ctx, JobKind::Migrate);
+        });
+    }
+
+    fn poll_with_save_and_migration<F, S>(
+        &mut self,
+        ctx: &egui::Context,
+        save: F,
+        start_migration: S,
+    ) where
+        F: FnOnce(&Self) -> Result<(), String>,
+        S: FnOnce(&mut Self, &egui::Context),
+    {
         let mut save = Some(save);
+        let mut start_migration = Some(start_migration);
         if let Some(job) = &self.job {
             match job.try_recv() {
                 Ok(result) => {
@@ -143,13 +166,13 @@ impl AppleSettings {
                 crate::apple::api::validate_connection(&connection)?;
                 Ok(connection)
             });
-        } else if self.connection.is_none()
-            && !self.migration_attempted
-            && self.has_legacy_credentials()
-            && self.job.is_none()
+        } else if self.legacy_migration_pending && self.job.is_none() && self.pending_save.is_none()
         {
+            self.legacy_migration_pending = false;
             self.migration_attempted = true;
-            self.start_create(ctx, JobKind::Migrate);
+            start_migration
+                .take()
+                .expect("migration launcher is available")(self, ctx);
         }
     }
 
@@ -232,7 +255,7 @@ impl AppleSettings {
         if self.saved_credentials.is_some() {
             ui.label("Saved Parsequerade connection · read-only app listings and metadata.");
         } else if self.job_kind == Some(JobKind::ValidateSaved) {
-            ui.label("Checking saved Parsequerade connection…");
+            ui.label("Checking saved connection details…");
         } else if self.job_kind.is_some() {
             ui.label("Connecting securely through Parsequerade…");
         } else {
@@ -519,10 +542,66 @@ mod tests {
     #[test]
     fn legacy_settings_load_and_are_marked_for_migration() {
         let json = r#"{"issuer_id":"issuer","key_id":"key","private_key":"pem","filename":"old.p8","vendor_number":"123"}"#;
-        let settings: AppleSettings = serde_json::from_str(json).unwrap();
+        let settings = AppleSettings::finish_loading(serde_json::from_str(json).unwrap());
         assert!(settings.has_legacy_credentials());
         assert_eq!(settings.vendor_number, "123");
+        assert!(settings.legacy_migration_pending);
         assert!(!settings.migration_attempted);
+    }
+
+    #[test]
+    fn newly_entered_complete_key_does_not_start_automatic_migration() {
+        let mut settings = AppleSettings {
+            issuer_id: "issuer".into(),
+            key_id: "key".into(),
+            private_key: "pem".into(),
+            ..AppleSettings::default()
+        };
+        let mut launches = 0;
+
+        settings.poll_with_save_and_migration(
+            &egui::Context::default(),
+            |_| Ok(()),
+            |_, _| launches += 1,
+        );
+
+        assert_eq!(launches, 0);
+        assert!(settings.job.is_none());
+        assert!(!settings.migration_attempted);
+    }
+
+    #[test]
+    fn failed_legacy_migration_is_consumed_and_never_retried_automatically() {
+        let json = r#"{"issuer_id":"issuer","key_id":"key","private_key":"pem"}"#;
+        let mut settings = AppleSettings::finish_loading(serde_json::from_str(json).unwrap());
+        let mut launches = 0;
+        let ctx = egui::Context::default();
+
+        for _ in 0..3 {
+            settings.poll_with_save_and_migration(
+                &ctx,
+                |_| Ok(()),
+                |settings, _| {
+                    launches += 1;
+                    let (sender, receiver) = mpsc::channel();
+                    sender.send(Err("legacy connection failed".into())).unwrap();
+                    settings.job = Some(receiver);
+                    settings.job_kind = Some(JobKind::Migrate);
+                },
+            );
+        }
+
+        assert_eq!(launches, 1);
+        assert!(!settings.legacy_migration_pending);
+        assert!(settings.migration_attempted);
+        assert!(settings.job.is_none());
+        assert!(
+            settings
+                .feedback
+                .as_deref()
+                .unwrap()
+                .contains("legacy connection failed")
+        );
     }
 
     #[test]
@@ -542,7 +621,10 @@ mod tests {
             ..AppleSettings::default()
         };
 
-        settings.poll_with_save(&egui::Context::default(), |_| Ok(()));
+        settings.poll_with_save(&egui::Context::default(), |staged| {
+            assert!(staged.connection == Some(created.clone()));
+            Ok(())
+        });
 
         assert!(settings.connection == Some(created.clone()));
         assert!(settings.saved_credentials == Some(created.clone()));
@@ -559,6 +641,9 @@ mod tests {
         let mut settings = AppleSettings {
             connection: Some(saved.clone()),
             saved_credentials: Some(saved.clone()),
+            issuer_id: "replacement issuer".into(),
+            key_id: "replacement key".into(),
+            private_key: "replacement pem".into(),
             saved_validation_attempted: true,
             job: Some(receiver),
             job_kind: Some(JobKind::Connect),
@@ -572,6 +657,7 @@ mod tests {
         assert!(settings.saved_credentials == Some(saved.clone()));
         assert!(settings.credentials() == Some(saved));
         assert!(settings.job.is_none());
+        assert!(!settings.migration_attempted);
         assert!(
             settings
                 .feedback
@@ -588,6 +674,10 @@ mod tests {
         let mut settings = AppleSettings {
             connection: Some(previous.clone()),
             saved_credentials: Some(previous.clone()),
+            issuer_id: "legacy issuer".into(),
+            key_id: "legacy key".into(),
+            private_key: "legacy pem".into(),
+            legacy_migration_pending: true,
             pending_save: Some(created.clone()),
             ..AppleSettings::default()
         };
@@ -597,6 +687,13 @@ mod tests {
         assert!(settings.connection == Some(previous.clone()));
         assert!(settings.saved_credentials == Some(previous));
         assert!(settings.pending_save == Some(created));
+        let mut migration_started = false;
+        settings.poll_with_save_and_migration(
+            &egui::Context::default(),
+            |_| Ok(()),
+            |_, _| migration_started = true,
+        );
+        assert!(!migration_started);
         assert!(
             settings
                 .feedback
@@ -621,12 +718,17 @@ mod tests {
                     let ctx = egui::Context::default();
                     crate::style::configure(&ctx);
                     ctx.set_theme(theme);
+                    let mut keepalive = None;
                     let mut settings = match state {
-                        "connecting" => AppleSettings {
-                            job_kind: Some(JobKind::Connect),
-                            job: Some(mpsc::channel().1),
-                            ..AppleSettings::default()
-                        },
+                        "connecting" => {
+                            let (sender, receiver) = mpsc::channel();
+                            keepalive = Some(sender);
+                            AppleSettings {
+                                job_kind: Some(JobKind::Connect),
+                                job: Some(receiver),
+                                ..AppleSettings::default()
+                            }
+                        }
                         "error" => AppleSettings {
                             feedback: Some("Could not connect. Please retry.".into()),
                             error: true,
@@ -658,6 +760,7 @@ mod tests {
                             );
                         });
                     });
+                    drop(keepalive);
                 }
             }
         }

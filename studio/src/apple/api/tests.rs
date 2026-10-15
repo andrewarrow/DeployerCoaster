@@ -82,7 +82,7 @@ fn setup_rejects_untrusted_returned_base_url_and_redacts_errors() {
     let error = create_connection_with(&Client::new(), &endpoint, "issuer", "key", "secret")
         .err()
         .unwrap();
-    assert!(error.contains("Reconnect"));
+    assert!(error.contains("reconnect"));
     assert!(!error.contains("secret"));
     task.join().unwrap();
 }
@@ -273,4 +273,20 @@ fn live_parsequerade_reads() {
         "temporary connection revocation failed"
     );
     result.unwrap_or_else(|error| panic!("Live reads: {error}"));
+}
+
+#[test]
+fn credential_errors_explain_reconnection_and_never_expose_upstream_details() {
+    for (status, code) in [
+        (422, "invalid_credentials"),
+        (502, "upstream_authentication_failed"),
+    ] {
+        let error = api_error(
+            status,
+            &json!({"error": {"code": code, "message": "private upstream detail"}}),
+        );
+        assert!(error.contains("reconnect"));
+        assert!(error.contains("Issuer ID"));
+        assert!(!error.contains("private upstream detail"));
+    }
 }
