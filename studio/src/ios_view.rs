@@ -218,6 +218,7 @@ impl IosView {
         };
         self.select(app_id);
         self.poll();
+        self.media.poll_generation(ui.ctx());
         let Some(credentials) = credentials else {
             Frame::new().inner_margin(16).show(ui, |ui| {
                 ui.label("Connect an Apple account in Settings to load app details.");

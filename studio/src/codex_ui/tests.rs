@@ -6,6 +6,8 @@ fn test_codex() -> Codex {
         root: PathBuf::from("/workspace/a-very-long-workspace-directory-name"),
         website_request: None,
         created_website: None,
+        image_request: None,
+        uploaded_image: None,
         description_rewrite: None,
         rewrite_response: None,
         rewritten_description: None,
@@ -271,4 +273,143 @@ fn workspace_context_identifies_document_without_reading_credentials() {
     assert!(message.contains("Preserve its format and unknown fields"));
     assert!(message.ends_with("User request:\nRename this workspace"));
     assert!(contextual_message("Help", None).contains("No workspace document is open"));
+}
+
+fn image_request() -> ImageRequest {
+    ImageRequest {
+        root: PathBuf::from("/tmp/generated-ios-image"),
+        prompt: "Generate and upload a header image based on the heart-rate brief.".into(),
+        app: "app1".into(),
+        version: "version1".into(),
+        locale: "en-US".into(),
+        kind: crate::ios_images::ImageKind::Header,
+        _credentials: None,
+    }
+}
+
+#[test]
+fn image_generation_reuses_ready_chatgpt_session_with_the_generation_model() {
+    use crate::codex::CodexCommand;
+
+    let mut codex = test_codex();
+    let (client, requests, events) = CodexClient::test_channels();
+    codex.client = Some(client);
+    codex.image_request = Some(image_request());
+    codex.queue_generation(codex.image_request.as_ref().unwrap().prompt.clone());
+    events
+        .send(CodexEvent::AccountStatus(codex.account.clone()))
+        .unwrap();
+    events.send(CodexEvent::ChatReady).unwrap();
+
+    codex.poll(&egui::Context::default());
+    let CodexCommand::SendChatMessage {
+        message,
+        model,
+        reasoning_effort,
+    } = requests.try_recv().unwrap()
+    else {
+        panic!("image request was not sent");
+    };
+    assert!(message.contains("header image"));
+    assert_eq!(model, "gpt-6.1-sol");
+    assert_eq!(reasoning_effort, "xhigh");
+    assert!(
+        requests.try_recv().is_err(),
+        "a ready session needs no login/open command"
+    );
+    assert!(codex.busy && !codex.auto_send);
+}
+
+#[test]
+fn failed_or_interrupted_image_turn_never_reports_an_uploaded_image() {
+    for event in [
+        CodexEvent::ChatError("Upload failed".into()),
+        CodexEvent::ChatTurnCancelled,
+    ] {
+        let mut codex = test_codex();
+        let (client, requests, events) = CodexClient::test_channels();
+        codex.client = Some(client);
+        codex.image_request = Some(image_request());
+        codex.busy = true;
+        codex.sent_draft = Some(image_request().prompt);
+        codex.draft.clear();
+        events.send(event).unwrap();
+
+        codex.poll(&egui::Context::default());
+        assert!(codex.take_uploaded_image().is_none());
+        assert!(!codex.busy);
+        assert!(requests.try_recv().is_err());
+    }
+}
+
+#[test]
+fn settings_show_compact_connection_actions_without_the_chat_toggle() {
+    for (width, height) in [
+        (390.0, 844.0),
+        (768.0, 1024.0),
+        (1280.0, 800.0),
+        (1440.0, 900.0),
+    ] {
+        let ctx = egui::Context::default();
+        let mut codex = test_codex();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, height),
+                )),
+                ..Default::default()
+            },
+            |ui| codex.settings_ui(ui),
+        );
+        let labels: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text()),
+                _ => None,
+            })
+            .collect();
+        assert!(labels.contains(&"Sign in with another ChatGPT account"));
+        assert!(!labels.contains(&"Codex chat"));
+        assert!(!labels.contains(&"Close Codex chat"));
+        assert!(
+            labels.iter().all(|label| !label.is_empty()),
+            "{width}x{height}"
+        );
+    }
+
+    let ctx = egui::Context::default();
+    let mut codex = test_codex();
+    codex.account = None;
+    codex.available = false;
+    codex.error = Some("Codex could not start".into());
+    let output = ctx.run_ui(Default::default(), |ui| codex.settings_ui(ui));
+    let labels: Vec<_> = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => Some(text.galley.text()),
+            _ => None,
+        })
+        .collect();
+    assert!(labels.contains(&"Retry Codex connection"));
+
+    let mut codex = test_codex();
+    codex.login_pending = true;
+    codex.error = Some("The previous sign-in attempt failed and needs a retry.".into());
+    let output = ctx.run_ui(Default::default(), |ui| codex.settings_ui(ui));
+    let labels: Vec<_> = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => Some(text.galley.text()),
+            _ => None,
+        })
+        .collect();
+    assert!(labels.contains(&"Signing in with ChatGPT…"));
+    assert!(labels.iter().any(|label| {
+        label.contains("previous sign-in attempt failed")
+    }));
+    assert!(!labels.contains(&"a-long-account-address@example.com"));
 }

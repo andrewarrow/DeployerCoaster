@@ -221,6 +221,33 @@ fn render(
     )
 }
 
+fn render_ready(
+    ctx: &Context,
+    gallery: &mut Gallery,
+    details: &AppDetails,
+    size: egui::Vec2,
+) -> egui::FullOutput {
+    let credentials = AppleCredentials::test_credentials("gallery-tests");
+    ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+            ..Default::default()
+        },
+        |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                gallery.ui(
+                    ui,
+                    details,
+                    "en-US",
+                    &credentials,
+                    Palette::new(ui.visuals().dark_mode),
+                    false,
+                );
+            });
+        },
+    )
+}
+
 fn labels(output: &egui::FullOutput) -> Vec<&str> {
     output
         .shapes
@@ -346,6 +373,98 @@ fn gallery_distinguishes_loading_empty_and_failed_reads_and_poster_processing() 
     let poster = json!({"videoDeliveryState":{"state":"COMPLETE"},"previewFrameImage":{"state":{"state":"PROCESSING"}}});
     assert!(processing(&poster, Kind::Preview));
     assert_eq!(delivery_state(&poster, Kind::Preview), "PROCESSING");
+}
+
+#[test]
+fn image_generation_controls_appear_only_for_confirmed_empty_placements() {
+    let details = super::super::preview::preview_details();
+    let sizes = [
+        vec2(390.0, 844.0),
+        vec2(768.0, 1024.0),
+        vec2(1280.0, 800.0),
+        vec2(1440.0, 900.0),
+    ];
+    for size in sizes {
+        let ctx = Context::default();
+        crate::style::configure(&ctx);
+        let mut gallery = creative_gallery(&details);
+        let Some(Ok(media)) = &mut gallery.result else {
+            unreachable!()
+        };
+        media.placements = Ok(vec![]);
+        let output = render(&ctx, &mut gallery, &details, size, vec![]);
+        let text = labels(&output);
+        assert!(
+            text.contains(&"Generate and upload header"),
+            "{size:?}: {text:?}"
+        );
+        assert!(
+            text.contains(&"Generate and upload search"),
+            "{size:?}: {text:?}"
+        );
+
+        let Some(Ok(media)) = &mut gallery.result else {
+            unreachable!()
+        };
+        media.placements = Err("App Store Connect is unavailable.".into());
+        let output = render(&ctx, &mut gallery, &details, size, vec![]);
+        let text = labels(&output);
+        assert!(
+            !text.contains(&"Generate and upload header"),
+            "{size:?}: {text:?}"
+        );
+        assert!(
+            !text.contains(&"Generate and upload search"),
+            "{size:?}: {text:?}"
+        );
+
+        let Some(Ok(media)) = &mut gallery.result else {
+            unreachable!()
+        };
+        media.placements = Ok(preview(&details, "en-US")
+            .result
+            .unwrap()
+            .unwrap()
+            .placements
+            .unwrap());
+        let output = render(&ctx, &mut gallery, &details, size, vec![]);
+        let text = labels(&output);
+        assert!(
+            !text.contains(&"Generate and upload header"),
+            "{size:?}: {text:?}"
+        );
+        assert!(
+            !text.contains(&"Generate and upload search"),
+            "{size:?}: {text:?}"
+        );
+    }
+}
+
+#[test]
+fn image_briefs_survive_media_reload_and_clear_when_the_selection_changes() {
+    let details = super::super::preview::preview_details();
+    let ctx = Context::default();
+    crate::style::configure(&ctx);
+    let mut gallery = creative_gallery(&details);
+    gallery.generation.briefs = ["A warm pulse motif".into(), "A calm search tile".into()];
+
+    gallery.result = None;
+    let _ = render(&ctx, &mut gallery, &details, vec2(768.0, 1024.0), vec![]);
+    gallery.result = Some(Ok(Media {
+        screenshots: Ok(vec![]),
+        previews: Ok(vec![]),
+        placements: Ok(vec![]),
+    }));
+    let _ = render(&ctx, &mut gallery, &details, vec2(768.0, 1024.0), vec![]);
+    assert_eq!(gallery.generation.briefs[0], "A warm pulse motif");
+    assert_eq!(gallery.generation.briefs[1], "A calm search tile");
+
+    gallery.select(Selection {
+        app: "another-app".into(),
+        version: attr(details.version.as_ref().unwrap(), "id").into(),
+        locale: "en-US".into(),
+    });
+    assert_eq!(gallery.generation.briefs, [String::new(), String::new()]);
 }
 
 fn creative_gallery(details: &AppDetails) -> Gallery {
@@ -513,6 +632,58 @@ fn render_header_and_search_image_previews() {
                 "dark"
             };
             let path = output_dir.join(format!("ios-creative-images-{theme_name}-{width}.png"));
+            super::super::preview::screenshot(
+                &ctx,
+                latest.unwrap(),
+                textures,
+                path.to_str().unwrap(),
+                width * 2,
+                height * 2,
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires an available offscreen GPU adapter"]
+fn render_empty_header_and_search_generation_controls() {
+    let details = super::super::preview::preview_details();
+    let output_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target");
+    std::fs::create_dir_all(&output_dir).unwrap();
+    for theme in [egui::Theme::Light, egui::Theme::Dark] {
+        for [width, height] in [[390, 844], [768, 1024], [1280, 800], [1440, 900]] {
+            let ctx = Context::default();
+            crate::style::configure(&ctx);
+            ctx.set_pixels_per_point(2.0);
+            ctx.set_theme(theme);
+            let mut gallery = creative_gallery(&details);
+            let Some(Ok(media)) = &mut gallery.result else {
+                unreachable!()
+            };
+            media.screenshots = Ok(vec![]);
+            media.previews = Ok(vec![]);
+            media.placements = Ok(vec![]);
+            let mut textures = Vec::new();
+            let mut latest = None;
+            for _ in 0..3 {
+                let mut output = render_ready(
+                    &ctx,
+                    &mut gallery,
+                    &details,
+                    vec2(width as f32, height as f32),
+                );
+                let rendered_labels = labels(&output);
+                assert!(rendered_labels.contains(&"Generate and upload header"));
+                assert!(rendered_labels.contains(&"Generate and upload search"));
+                textures.append(&mut output.textures_delta.set);
+                latest = Some(output);
+            }
+            let theme_name = if theme == egui::Theme::Light {
+                "light"
+            } else {
+                "dark"
+            };
+            let path = output_dir.join(format!("ios-empty-generation-{theme_name}-{width}.png"));
             super::super::preview::screenshot(
                 &ctx,
                 latest.unwrap(),

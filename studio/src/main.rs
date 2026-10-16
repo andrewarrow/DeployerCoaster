@@ -19,6 +19,7 @@ mod description;
 mod dynadot;
 mod github;
 mod google_oauth;
+mod ios_images;
 mod ios_view;
 #[cfg(target_os = "macos")]
 mod macos;

@@ -18,8 +18,11 @@ use crate::{
         api::ParsequeradeApi,
         media::{self, AssetSet, Kind, Media, PlacedImage},
     },
+    ios_images::ImageKind,
     style::semibold,
 };
+
+mod generation;
 
 #[cfg(test)]
 mod tests;
@@ -57,6 +60,7 @@ pub(super) struct Gallery {
     images: HashMap<String, CachedImage>,
     image_job: Option<ImageJob>,
     opened: Option<(Value, Kind)>,
+    generation: generation::Generation,
 }
 
 impl Gallery {
@@ -86,6 +90,7 @@ impl Gallery {
         if let Some(job) = &self.job {
             match job.result.try_recv() {
                 Ok(result) => {
+                    self.generation.verify(&result);
                     self.result = Some(result);
                     self.job = None;
                 }
@@ -110,6 +115,14 @@ impl Gallery {
                     break;
                 }
             }
+        }
+    }
+
+    pub(super) fn poll_generation(&mut self, ctx: &Context) {
+        if self.generation.poll(ctx) {
+            // Read the placement again; a successful agent turn alone is not proof of an upload.
+            self.result = None;
+            self.job = None;
         }
     }
 
@@ -257,15 +270,15 @@ impl Gallery {
                     &mut self.opened,
                     palette,
                 );
-                for (heading, placement_type, empty) in [
+                for (heading, kind, empty) in [
                     (
                         "Header images",
-                        media::HEADER_PLACEMENT,
+                        ImageKind::Header,
                         "No header images for this localization.",
                     ),
                     (
                         "Search images",
-                        media::SEARCH_PLACEMENT,
+                        ImageKind::Search,
                         "No search images for this localization.",
                     ),
                 ] {
@@ -276,7 +289,7 @@ impl Gallery {
                             let images: Vec<_> = placements
                                 .iter()
                                 .filter(|image| {
-                                    attr(&image.placement, "placementType") == placement_type
+                                    attr(&image.placement, "placementType") == kind.placement()
                                 })
                                 .collect();
                             if images.is_empty() {
@@ -293,6 +306,14 @@ impl Gallery {
                                     );
                                 });
                             }
+                            self.generation.ui(
+                                ui,
+                                kind,
+                                details,
+                                locale,
+                                images.is_empty(),
+                                (!refreshing).then_some(credentials),
+                            );
                         }
                         Err(error) => {
                             ui.add(Label::new(RichText::new(error).color(palette.error)).wrap());
@@ -303,7 +324,10 @@ impl Gallery {
         }
         self.show_opened(ui.ctx(), palette);
         if retry {
-            self.clear();
+            self.result = None;
+            self.images.clear();
+            self.image_job = None;
+            self.opened = None;
             ui.ctx().request_repaint();
         } else {
             self.trim_images();

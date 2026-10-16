@@ -5,6 +5,7 @@ use std::{
 
 use crate::codex::{ChatGptAccount, CodexClient, CodexEvent, CodexWorkStatus};
 use crate::description::{DescriptionRewriteRequest, RewrittenDescription};
+use crate::ios_images::{ImageRequest, UploadedImage};
 use crate::website::WebsiteRequest;
 
 const GENERATION_MODEL: &str = "gpt-6.1-sol";
@@ -27,6 +28,7 @@ struct ChatMessage {
 enum GenerationKind {
     Description,
     Website,
+    Image,
 }
 
 pub(crate) struct Codex {
@@ -34,6 +36,8 @@ pub(crate) struct Codex {
     root: PathBuf,
     website_request: Option<WebsiteRequest>,
     created_website: Option<PathBuf>,
+    image_request: Option<ImageRequest>,
+    uploaded_image: Option<UploadedImage>,
     description_rewrite: Option<DescriptionRewriteRequest>,
     rewrite_response: Option<String>,
     rewritten_description: Option<RewrittenDescription>,
@@ -64,12 +68,21 @@ impl Codex {
         codex
     }
 
+    pub(crate) fn for_image(request: ImageRequest) -> Self {
+        let mut codex = Self::disconnected(request.root.clone());
+        codex.image_request = Some(request.clone());
+        codex.start_generation(request.prompt);
+        codex
+    }
+
     fn disconnected(root: PathBuf) -> Self {
         Self {
             client: None,
             root,
             website_request: None,
             created_website: None,
+            image_request: None,
+            uploaded_image: None,
             description_rewrite: None,
             rewrite_response: None,
             rewritten_description: None,
@@ -116,7 +129,10 @@ impl Codex {
         self.sent_draft = None;
         self.activity.clear();
         self.error = None;
-        match CodexClient::new(&self.root, self.website_request.is_some()) {
+        match CodexClient::new(
+            &self.root,
+            self.website_request.is_some() || self.image_request.is_some(),
+        ) {
             Ok(client) => {
                 self.client = Some(client);
                 self.available = true;
@@ -126,7 +142,10 @@ impl Codex {
     }
 
     pub(crate) fn set_root(&mut self, root: &Path) {
-        if self.website_request.is_some() || self.description_rewrite.is_some() {
+        if self.website_request.is_some()
+            || self.description_rewrite.is_some()
+            || self.image_request.is_some()
+        {
             return;
         }
         let root = root.canonicalize().unwrap_or_else(|_| root.to_owned());
@@ -167,24 +186,78 @@ impl Codex {
         let prompt = request.prompt.clone();
         self.website_request = Some(request);
         self.description_rewrite = None;
+        self.image_request = None;
         self.start_generation(prompt);
     }
 
     pub(crate) fn rewrite_description(&mut self, request: DescriptionRewriteRequest, root: &Path) {
         self.root = root.to_owned();
         self.website_request = None;
+        self.image_request = None;
         let prompt = request.prompt.clone();
         self.description_rewrite = Some(request);
         self.start_generation(prompt);
     }
 
+    pub(crate) fn generate_image(&mut self, request: ImageRequest) {
+        self.root = request.root.clone();
+        let prompt = request.prompt.clone();
+        self.website_request = None;
+        self.description_rewrite = None;
+        self.image_request = Some(request);
+        self.start_generation(prompt);
+    }
+
+    pub(crate) fn image_generation_ui(&mut self, ui: &mut egui::Ui) {
+        let retry = self.generation_ui(ui, GenerationKind::Image);
+        if retry && let Some(request) = self.image_request.clone() {
+            self.generate_image(request);
+        }
+        if (self.busy || self.auto_send)
+            && ui
+                .add_enabled(
+                    !self.cancelling,
+                    egui::Button::new("Cancel").min_size(egui::vec2(72.0, 44.0)),
+                )
+                .clicked()
+        {
+            if self.busy {
+                match self
+                    .client
+                    .as_ref()
+                    .expect("busy Codex has a client")
+                    .cancel_chat_message()
+                {
+                    Ok(()) => self.cancelling = true,
+                    Err(error) => self.error = Some(error),
+                }
+            } else {
+                self.auto_send = false;
+                self.activity = "Request cancelled.".into();
+            }
+        }
+    }
+
+    pub(crate) fn image_generation_running(&self) -> bool {
+        self.busy || self.auto_send
+    }
+
+    pub(crate) fn take_uploaded_image(&mut self) -> Option<UploadedImage> {
+        self.uploaded_image.take()
+    }
+
     fn start_generation(&mut self, prompt: String) {
+        self.queue_generation(prompt);
+        self.restart();
+    }
+
+    fn queue_generation(&mut self, prompt: String) {
         self.model = GENERATION_MODEL;
         self.effort = GENERATION_EFFORT;
         self.rewritten_description = None;
         self.created_website = None;
+        self.uploaded_image = None;
         self.messages.clear();
-        self.restart();
         self.draft = prompt;
         self.auto_send = true;
         self.open = false;
@@ -194,6 +267,8 @@ impl Codex {
         self.website_request = None;
         self.created_website = None;
         self.description_rewrite = None;
+        self.image_request = None;
+        self.uploaded_image = None;
         self.rewrite_response = None;
         self.auto_send = false;
     }
@@ -253,10 +328,17 @@ impl Codex {
                 "Website creation stopped. Try again.",
                 "Retry website",
             ),
+            GenerationKind::Image => (
+                "Codex is generating and uploading the image…",
+                "Sign in with OpenAI to generate the image.",
+                "Image generation stopped. Try again.",
+                "Retry image",
+            ),
         };
         let has_request = match kind {
             GenerationKind::Description => self.description_rewrite.is_some(),
             GenerationKind::Website => self.website_request.is_some(),
+            GenerationKind::Image => self.image_request.is_some(),
         };
         if !has_request {
             ui.label(stopped);
@@ -422,6 +504,14 @@ impl Codex {
                     {
                         self.created_website = Some(request.root.clone());
                     }
+                    if self.busy
+                        && let Some(request) = &self.image_request
+                    {
+                        match request.complete() {
+                            Ok(image) => self.uploaded_image = Some(image),
+                            Err(error) => self.error = Some(error),
+                        }
+                    }
                     self.finish_turn();
                     changed = true;
                 }
@@ -487,7 +577,10 @@ impl Codex {
         if self.checking || self.login_pending || self.opening || self.busy {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
-        changed && self.website_request.is_none() && self.description_rewrite.is_none()
+        changed
+            && self.website_request.is_none()
+            && self.description_rewrite.is_none()
+            && self.image_request.is_none()
     }
 
     fn finish_turn(&mut self) {
@@ -588,16 +681,37 @@ impl Codex {
     }
 
     pub(crate) fn settings_ui(&mut self, ui: &mut egui::Ui) {
-        self.toolbar(ui);
-        ui.add_space(8.0);
-        ui.add(egui::Label::new("Codex manages your ChatGPT sign-in on this device.").wrap());
-        if self.account.is_some()
-            && !self.busy
-            && ui.button("Sign in with another ChatGPT account").clicked()
-        {
-            self.messages.clear();
-            self.restart();
-            self.begin_login();
+        ui.horizontal_wrapped(|ui| {
+            if self.checking || self.login_pending {
+                ui.spinner();
+                ui.label(if self.login_pending {
+                    "Signing in with ChatGPT…"
+                } else {
+                    "Checking ChatGPT…"
+                });
+            } else if !self.available {
+                if ui.button("Retry Codex connection").clicked() {
+                    self.restart();
+                }
+            } else if let Some(account) = &self.account {
+                ui.label(account.email.as_deref().unwrap_or("ChatGPT connected"));
+                ui.weak(account.plan_type.as_deref().unwrap_or("ChatGPT"));
+                if !self.busy && ui.button("Sign in with another ChatGPT account").clicked() {
+                    self.messages.clear();
+                    self.restart();
+                    self.begin_login();
+                }
+            } else if ui.button("Sign in with ChatGPT").clicked() {
+                self.begin_login();
+            }
+        });
+        if let Some(error) = &self.error {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(error).color(ui.visuals().error_fg_color),
+                )
+                .wrap(),
+            );
         }
     }
 

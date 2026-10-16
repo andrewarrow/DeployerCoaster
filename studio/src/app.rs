@@ -36,7 +36,7 @@ impl SettingsSection {
             Self::General => "General",
             Self::Android => "Android",
             Self::Apple => "Apple",
-            Self::ChatGPT => "ChatGPT",
+            Self::ChatGPT => "OpenAI",
             Self::Dynadot => "Dynadot",
         }
     }
