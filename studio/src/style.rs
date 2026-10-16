@@ -1,5 +1,11 @@
 use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, TextStyle};
-use std::{fs, sync::Arc};
+use std::{
+    fs,
+    sync::{Arc, OnceLock},
+};
+
+#[cfg(test)]
+mod tests;
 
 // Load installed UI faces rather than distributing platform font files.
 #[cfg(target_os = "macos")]
@@ -24,7 +30,7 @@ const FONTS: &[(&str, &str)] = &[
     ),
 ];
 
-pub fn configure(context: &egui::Context) {
+fn font_definitions() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     for (name, weight, bold) in [
         ("system-ui", 400.0, false),
@@ -59,6 +65,27 @@ pub fn configure(context: &egui::Context) {
             }
         }
     }
+    // egui does not use the OS font cascade. SFNS and the bundled fonts lack
+    // Hebrew and many other scripts, so register installed fallback faces for
+    // both labels and TextEdit (which defaults to the monospace family).
+    #[cfg(target_os = "macos")]
+    for (name, path) in [
+        ("system-hebrew", "/System/Library/Fonts/SFHebrew.ttf"),
+        ("system-arabic", "/System/Library/Fonts/SFArabic.ttf"),
+        (
+            "system-unicode",
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        ),
+    ] {
+        if let Ok(bytes) = fs::read(path) {
+            fonts
+                .font_data
+                .insert(name.into(), Arc::new(FontData::from_owned(bytes)));
+            for family in [FontFamily::Proportional, FontFamily::Monospace] {
+                fonts.families.get_mut(&family).unwrap().push(name.into());
+            }
+        }
+    }
     let mut heading = fonts.families[&FontFamily::Proportional].clone();
     if fonts.font_data.contains_key("system-ui-semibold") {
         heading.insert(0, "system-ui-semibold".into());
@@ -77,7 +104,13 @@ pub fn configure(context: &egui::Context) {
             .unwrap()
             .insert(0, "system-mono".into());
     }
-    context.set_fonts(fonts);
+    fonts
+}
+
+pub fn configure(context: &egui::Context) {
+    // Share font bytes across native windows, including the large Unicode face.
+    static FONTS: OnceLock<FontDefinitions> = OnceLock::new();
+    context.set_fonts(FONTS.get_or_init(font_definitions).clone());
     for theme in [egui::Theme::Light, egui::Theme::Dark] {
         let mut style = (*context.style_of(theme)).clone();
         style
