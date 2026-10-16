@@ -253,7 +253,6 @@ fn information(ui: &mut Ui, workspace: &mut Workspace, details: &AppDetails, pal
             palette,
         );
         read_row(ui, "Created", attr(version, "createdDate"), palette);
-        field_note(ui, palette);
     } else {
         unavailable(
             ui,
@@ -312,7 +311,6 @@ fn listing(ui: &mut Ui, workspace: &mut Workspace, details: &AppDetails, palette
         ] {
             edit_field(ui, workspace, version, &route, field, &scope, palette);
         }
-        field_note(ui, palette);
     } else if details.version.is_none() {
         unavailable(
             ui,
@@ -406,7 +404,6 @@ fn privacy(ui: &mut Ui, workspace: &mut Workspace, details: &AppDetails, palette
             "App",
         );
     }
-    field_note(ui, palette);
 }
 
 fn versions(
@@ -734,17 +731,10 @@ fn form_row<R>(
     }
 }
 
-fn field_note(ui: &mut Ui, palette: Palette) {
-    ui.add_space(4.0);
-    form_row(ui, "", palette, 0.0, |ui, _| {
-        draft_note(ui, palette);
-    });
-}
-
 fn draft_note(ui: &mut Ui, palette: Palette) {
     ui.add(
         Label::new(
-            RichText::new("Edits stay in this session. Publishing is not available yet.")
+            RichText::new("Save applies all local changes to App Store Connect.")
                 .size(11.0)
                 .color(palette.muted),
         )

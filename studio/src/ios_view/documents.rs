@@ -382,6 +382,7 @@ pub(super) struct FieldContext {
     pub modified: bool,
 }
 
+#[derive(Clone)]
 pub(super) struct Edit {
     pub document: Document,
     pub label: String,

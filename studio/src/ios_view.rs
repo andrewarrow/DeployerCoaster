@@ -22,6 +22,7 @@ mod completeness;
 mod documents;
 mod editor;
 mod media;
+mod metadata;
 mod versions;
 
 use documents::{Document, Workspace};
@@ -62,12 +63,14 @@ pub(crate) struct IosView {
     creation: Option<versions::Creation>,
     age_copy: age_copy::AgeCopy,
     media: media::Gallery,
+    metadata: metadata::Metadata,
 }
 
 enum Action {
     Refresh,
     Version(String),
     NewVersion,
+    Save,
 }
 
 impl IosView {
@@ -153,7 +156,11 @@ impl IosView {
         credentials: AppleCredentials,
         ctx: &egui::Context,
     ) {
-        if self.job.is_some() || self.age_copy.pasting(app_id) || self.creating_version(app_id) {
+        if self.job.is_some()
+            || self.age_copy.pasting(app_id)
+            || self.creating_version(app_id)
+            || self.metadata.saving(app_id)
+        {
             return;
         }
         if let Some(entry) = self.cache.get_mut(app_id) {
@@ -216,6 +223,7 @@ impl IosView {
         credentials: Option<&AppleCredentials>,
     ) {
         self.age_copy.poll(&mut self.cache);
+        self.metadata.poll(&mut self.cache, &mut self.workspaces);
         let Some((app_id, name)) = selection else {
             self.clear_selection();
             return;
@@ -252,8 +260,11 @@ impl IosView {
         }
 
         let palette = Palette::new(ui.visuals().dark_mode);
-        let loading =
-            self.job.is_some() || self.age_copy.pasting(app_id) || self.creating_version(app_id);
+        let saving = self.metadata.saving(app_id);
+        let loading = self.job.is_some()
+            || self.age_copy.pasting(app_id)
+            || self.creating_version(app_id)
+            || saving;
         let entry = self.cache.get(app_id);
         let details = entry.and_then(|entry| entry.data.as_ref());
         let workspace = self.workspaces.entry(app_id.into()).or_default();
@@ -306,6 +317,12 @@ impl IosView {
                 .show(ui, |ui| {
                     chrome::tabs(ui, workspace, palette);
                     chrome::jump_bar(ui, workspace, details, palette);
+                    if self
+                        .metadata
+                        .controls(ui, workspace, app_id, loading, palette)
+                    {
+                        action = Some(Action::Save);
+                    }
                     // Register the background before child controls so their text menus
                     // keep priority, while empty margins and the full viewport accept a menu.
                     let background = (workspace.active == Document::AgeRating).then(|| {
@@ -375,14 +392,16 @@ impl IosView {
                                             );
                                         } else {
                                             self.media.cancel();
-                                            editor::document(
-                                                ui,
-                                                workspace,
-                                                details,
-                                                palette,
-                                                loading,
-                                                &mut action,
-                                            );
+                                            ui.add_enabled_ui(!saving, |ui| {
+                                                editor::document(
+                                                    ui,
+                                                    workspace,
+                                                    details,
+                                                    palette,
+                                                    loading,
+                                                    &mut action,
+                                                );
+                                            });
                                         }
                                     } else if loading {
                                         ui.horizontal(|ui| {
@@ -404,6 +423,15 @@ impl IosView {
                 });
         });
         if let Some(action) = action {
+            if matches!(action, Action::Save) {
+                self.metadata.start(
+                    app_id,
+                    &self.workspaces[app_id],
+                    credentials.clone(),
+                    ui.ctx(),
+                );
+                return;
+            }
             if matches!(action, Action::NewVersion) {
                 self.media.cancel();
                 self.start_version(app_id, credentials.clone(), ui.ctx());
@@ -414,7 +442,7 @@ impl IosView {
                 Action::Refresh => details
                     .and_then(|d| d.version.as_ref())
                     .map(|v| attr(v, "id").to_owned()),
-                Action::NewVersion => unreachable!(),
+                Action::NewVersion | Action::Save => unreachable!(),
             };
             self.media.cancel();
             self.start(app_id, version, credentials.clone(), ui.ctx());

@@ -93,7 +93,11 @@ impl IosView {
         credentials: AppleCredentials,
         ctx: &egui::Context,
     ) {
-        if self.creation.is_some() || self.job.is_some() || self.age_copy.pasting(app_id) {
+        if self.creation.is_some()
+            || self.job.is_some()
+            || self.age_copy.pasting(app_id)
+            || self.metadata.saving(app_id)
+        {
             return;
         }
         if let Some(entry) = self.cache.get_mut(app_id) {

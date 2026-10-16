@@ -114,10 +114,13 @@ impl Transport for ParsequeradeApi {
                 body["platform"].as_str().unwrap_or_default(),
                 body["versionString"].as_str().unwrap_or_default(),
             ))
+        } else if method == Method::PATCH && body.is_some() && url.query().is_none() {
+            self.runtime.block_on(
+                self.client
+                    .update_metadata(url.path(), body.expect("checked above")),
+            )
         } else {
-            return Err(
-                "Only age-rating paste and version creation are supported for writes through Parsequerade.".into(),
-            );
+            return Err("This write is not supported through Parsequerade.".into());
         };
         // Keep status-aware consumers (especially optional 404s) and their test
         // transports intact. SDK errors already exclude private upstream details.

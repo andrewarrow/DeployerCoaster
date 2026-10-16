@@ -80,7 +80,7 @@ fn sdk_read_errors_keep_status_and_envelope_for_optional_resources() {
 }
 
 #[test]
-fn age_rating_writes_use_sdk_validation_and_other_writes_stay_unavailable() {
+fn supported_writes_use_sdk_validation_and_other_writes_stay_unavailable() {
     let mut api = ParsequeradeApi::new(AppleCredentials::test_credentials("issuer")).unwrap();
     let (status, value) = api
         .send(
@@ -91,6 +91,11 @@ fn age_rating_writes_use_sdk_validation_and_other_writes_stay_unavailable() {
         .unwrap();
     assert_eq!(status, 400);
     assert_eq!(value["error"]["code"], "invalid_request");
+    let (status, value) = api
+        .send(Method::PATCH, "/apps/456", Some(&json!({})))
+        .unwrap();
+    assert_eq!(status, 400);
+    assert_eq!(value["error"]["code"], "invalid_update");
     for (method, path, body) in [
         (Method::POST, "/apps/456", Some(json!({}))),
         (
@@ -104,13 +109,13 @@ fn age_rating_writes_use_sdk_validation_and_other_writes_stay_unavailable() {
             Some(json!({})),
         ),
         (Method::POST, "/apps/456/app-infos/info/age-rating", None),
-        (Method::PATCH, "/apps/456", Some(json!({}))),
+        (Method::PATCH, "/apps/456?x=1", Some(json!({}))),
         (Method::GET, "/apps", Some(json!({}))),
     ] {
         assert!(
             api.send(method, path, body.as_ref())
                 .unwrap_err()
-                .contains("Only age-rating")
+                .contains("This write is not supported")
         );
     }
 }

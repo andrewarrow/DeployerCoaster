@@ -686,6 +686,11 @@ fn inspector_contents(
         "Access",
         if workspace.active == Document::AgeRating {
             "Age rating paste"
+        } else if matches!(
+            workspace.active,
+            Document::Information | Document::Listing | Document::Privacy | Document::Changes
+        ) {
+            "Read and write"
         } else {
             "Read only"
         },
@@ -727,7 +732,7 @@ pub(super) fn status(
                     RichText::new(if count == 0 {
                         "No local changes".into()
                     } else {
-                        format!("{count} local changes · Session only")
+                        format!("{count} unsaved changes")
                     })
                     .size(11.0)
                     .color(palette.muted),
@@ -745,6 +750,14 @@ pub(super) fn status(
                     "Syncing…"
                 } else if workspace.active == Document::AgeRating {
                     "Age rating paste"
+                } else if matches!(
+                    workspace.active,
+                    Document::Information
+                        | Document::Listing
+                        | Document::Privacy
+                        | Document::Changes
+                ) {
+                    "Read and write"
                 } else {
                     "Read only"
                 })
