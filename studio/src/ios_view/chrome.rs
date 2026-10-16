@@ -187,6 +187,17 @@ pub(super) fn version_picker(
                     if details.versions.is_empty() {
                         ui.label("No iOS versions are available.");
                     }
+                    ui.separator();
+                    let next = super::versions::next_version(&details.versions);
+                    let response = ui.add_enabled(next.is_ok(), Button::new("+ New version"));
+                    let response = match &next {
+                        Ok(number) => response.on_hover_text(format!("Create version {number}")),
+                        Err(error) => response.on_disabled_hover_text(error),
+                    };
+                    if response.clicked() {
+                        *action = Some(Action::NewVersion);
+                        ui.close();
+                    }
                 }
             })
             .response

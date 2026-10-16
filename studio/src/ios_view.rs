@@ -22,6 +22,7 @@ mod completeness;
 mod documents;
 mod editor;
 mod media;
+mod versions;
 
 use documents::{Document, Workspace};
 
@@ -58,6 +59,7 @@ pub(crate) struct IosView {
     workspaces: HashMap<String, Workspace>,
     job: Option<Job>,
     review_job: Option<Job<Option<serde_json::Value>>>,
+    creation: Option<versions::Creation>,
     age_copy: age_copy::AgeCopy,
     media: media::Gallery,
 }
@@ -65,6 +67,7 @@ pub(crate) struct IosView {
 enum Action {
     Refresh,
     Version(String),
+    NewVersion,
 }
 
 impl IosView {
@@ -93,6 +96,7 @@ impl IosView {
 
     fn poll(&mut self) {
         self.poll_details();
+        self.poll_version();
         let Some(job) = &self.review_job else { return };
         let result = match job.result.try_recv() {
             Ok(result) => result,
@@ -149,7 +153,7 @@ impl IosView {
         credentials: AppleCredentials,
         ctx: &egui::Context,
     ) {
-        if self.job.is_some() || self.age_copy.pasting(app_id) {
+        if self.job.is_some() || self.age_copy.pasting(app_id) || self.creating_version(app_id) {
             return;
         }
         if let Some(entry) = self.cache.get_mut(app_id) {
@@ -231,6 +235,7 @@ impl IosView {
 
         // Resume an interrupted check when returning to cached details, without reloading them.
         if self.job.is_none()
+            && !self.creating_version(app_id)
             && self.review_job.is_none()
             && let Some(details) = self
                 .cache
@@ -247,7 +252,8 @@ impl IosView {
         }
 
         let palette = Palette::new(ui.visuals().dark_mode);
-        let loading = self.job.is_some() || self.age_copy.pasting(app_id);
+        let loading =
+            self.job.is_some() || self.age_copy.pasting(app_id) || self.creating_version(app_id);
         let entry = self.cache.get(app_id);
         let details = entry.and_then(|entry| entry.data.as_ref());
         let workspace = self.workspaces.entry(app_id.into()).or_default();
@@ -398,11 +404,17 @@ impl IosView {
                 });
         });
         if let Some(action) = action {
+            if matches!(action, Action::NewVersion) {
+                self.media.cancel();
+                self.start_version(app_id, credentials.clone(), ui.ctx());
+                return;
+            }
             let version = match action {
                 Action::Version(id) => Some(id),
                 Action::Refresh => details
                     .and_then(|d| d.version.as_ref())
                     .map(|v| attr(v, "id").to_owned()),
+                Action::NewVersion => unreachable!(),
             };
             self.media.cancel();
             self.start(app_id, version, credentials.clone(), ui.ctx());

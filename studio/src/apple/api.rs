@@ -100,9 +100,23 @@ impl Transport for ParsequeradeApi {
             self.runtime
                 .block_on(self.client.update_age_rating(parts[2], parts[4], body))
                 .map(|rating| age_rating_response(rating, body))
+        } else if method == Method::POST && body.is_some() && is_version_collection_path(path) {
+            let body = body.expect("checked above");
+            let attributes = body.as_object().ok_or("Invalid version attributes.")?;
+            if attributes.len() != 2 {
+                return Err(
+                    "Only platform and versionString are accepted for new versions.".into(),
+                );
+            }
+            let app_id = path.split('/').nth(2).expect("validated path");
+            self.runtime.block_on(self.client.create_version(
+                app_id,
+                body["platform"].as_str().unwrap_or_default(),
+                body["versionString"].as_str().unwrap_or_default(),
+            ))
         } else {
             return Err(
-                "Only age-rating paste is supported for writes through Parsequerade.".into(),
+                "Only age-rating paste and version creation are supported for writes through Parsequerade.".into(),
             );
         };
         // Keep status-aware consumers (especially optional 404s) and their test
@@ -115,6 +129,15 @@ impl Transport for ParsequeradeApi {
             }
         }
     }
+}
+
+fn is_version_collection_path(path: &str) -> bool {
+    let parts: Vec<_> = path.split('/').collect();
+    parts.len() == 4
+        && parts[0].is_empty()
+        && parts[1] == "apps"
+        && validate_id(parts[2]).is_ok()
+        && parts[3] == "versions"
 }
 
 fn age_rating_response(rating: parsequerade::AgeRating, attributes: &Value) -> Value {
