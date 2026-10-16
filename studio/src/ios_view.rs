@@ -17,6 +17,7 @@ use crate::apple::{
 };
 
 mod age_copy;
+mod builds;
 mod chrome;
 mod completeness;
 mod documents;
@@ -64,6 +65,7 @@ pub(crate) struct IosView {
     age_copy: age_copy::AgeCopy,
     media: media::Gallery,
     metadata: metadata::Metadata,
+    builds: builds::Builds,
 }
 
 enum Action {
@@ -86,6 +88,7 @@ impl IosView {
         self.review_job = None;
         self.selected = None;
         self.media.cancel();
+        self.builds.clear();
     }
 
     fn select(&mut self, app_id: &str) {
@@ -94,6 +97,7 @@ impl IosView {
             self.review_job = None;
             self.selected = Some(app_id.to_owned());
             self.media.clear();
+            self.builds.clear();
         }
     }
 
@@ -133,6 +137,7 @@ impl IosView {
             match result {
                 Ok(details) => {
                     self.media.clear();
+                    self.builds.clear();
                     self.workspaces
                         .entry(selected.clone())
                         .or_default()
@@ -160,6 +165,7 @@ impl IosView {
             || self.age_copy.pasting(app_id)
             || self.creating_version(app_id)
             || self.metadata.saving(app_id)
+            || self.builds.attaching(app_id)
         {
             return;
         }
@@ -224,6 +230,7 @@ impl IosView {
     ) {
         self.age_copy.poll(&mut self.cache);
         self.metadata.poll(&mut self.cache, &mut self.workspaces);
+        self.builds.poll(&mut self.cache);
         let Some((app_id, name)) = selection else {
             self.clear_selection();
             return;
@@ -264,6 +271,7 @@ impl IosView {
         let loading = self.job.is_some()
             || self.age_copy.pasting(app_id)
             || self.creating_version(app_id)
+            || self.builds.attaching(app_id)
             || saving;
         let entry = self.cache.get(app_id);
         let details = entry.and_then(|entry| entry.data.as_ref());
@@ -372,7 +380,10 @@ impl IosView {
                                                 .wrap(),
                                             );
                                         }
-                                        if workspace.active == Document::Media {
+                                        if matches!(
+                                            workspace.active,
+                                            Document::Media | Document::Builds
+                                        ) {
                                             if ui.ctx().content_rect().width() < 700.0 {
                                                 chrome::version_picker(
                                                     ui,
@@ -382,10 +393,21 @@ impl IosView {
                                                 );
                                                 ui.add_space(12.0);
                                             }
+                                        }
+                                        if workspace.active == Document::Media {
                                             self.media.ui(
                                                 ui,
                                                 details,
                                                 &workspace.locale,
+                                                credentials,
+                                                palette,
+                                                loading,
+                                            );
+                                        } else if workspace.active == Document::Builds {
+                                            self.media.cancel();
+                                            self.builds.ui(
+                                                ui,
+                                                details,
                                                 credentials,
                                                 palette,
                                                 loading,
@@ -445,6 +467,7 @@ impl IosView {
                 Action::NewVersion | Action::Save => unreachable!(),
             };
             self.media.cancel();
+            self.builds.clear();
             self.start(app_id, version, credentials.clone(), ui.ctx());
         }
     }

@@ -114,6 +114,17 @@ impl Transport for ParsequeradeApi {
                 body["platform"].as_str().unwrap_or_default(),
                 body["versionString"].as_str().unwrap_or_default(),
             ))
+        } else if method == Method::PATCH && body.is_some() && is_version_build_path(path) {
+            let parts: Vec<_> = path.split('/').collect();
+            let body = body.expect("checked above");
+            if body.as_object().is_none_or(|value| value.len() != 1) {
+                return Err("Provide a build ID to attach.".into());
+            }
+            let build_id = body["buildId"]
+                .as_str()
+                .ok_or("Provide a build ID to attach.")?;
+            self.runtime
+                .block_on(self.client.attach_build(parts[2], parts[4], build_id))
         } else if method == Method::PATCH && body.is_some() && url.query().is_none() {
             self.runtime.block_on(
                 self.client
@@ -132,6 +143,11 @@ impl Transport for ParsequeradeApi {
             }
         }
     }
+}
+
+fn is_version_build_path(path: &str) -> bool {
+    let parts: Vec<_> = path.split('/').collect();
+    parts.len() == 6 && parts[1] == "apps" && parts[3] == "versions" && parts[5] == "build"
 }
 
 fn is_version_collection_path(path: &str) -> bool {

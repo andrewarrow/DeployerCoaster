@@ -97,6 +97,7 @@ impl IosView {
             || self.job.is_some()
             || self.age_copy.pasting(app_id)
             || self.metadata.saving(app_id)
+            || self.builds.attaching(app_id)
         {
             return;
         }

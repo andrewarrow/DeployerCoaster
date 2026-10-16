@@ -194,6 +194,7 @@ impl Document {
                 | Self::Listing
                 | Self::Media
                 | Self::Versions
+                | Self::Builds
                 | Self::Privacy
                 | Self::AgeRating
                 | Self::Review
