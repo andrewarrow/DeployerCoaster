@@ -614,7 +614,7 @@ fn inspector_contents(
         match workspace.active {
             Document::Information => "App",
             Document::Listing => "Version localization",
-            Document::Media => "Screenshots and app previews",
+            Document::Media => "App Store media",
             Document::Privacy => "App metadata",
             Document::AgeRating => "Age rating declaration",
             Document::Versions => "Version collection",

@@ -1,11 +1,12 @@
 use std::{
+    collections::HashMap,
     io::Read,
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
 use egui::ColorImage;
-use reqwest::{Url, blocking::Client};
+use reqwest::{Method, Url, blocking::Client};
 use serde_json::Value;
 
 use super::{
@@ -23,30 +24,11 @@ const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 pub(crate) enum Kind {
     Screenshot,
     Preview,
+    LibraryImage,
 }
 
-impl Kind {
-    fn collection(self) -> &'static str {
-        match self {
-            Self::Screenshot => "screenshot-sets",
-            Self::Preview => "preview-sets",
-        }
-    }
-
-    fn assets(self) -> &'static str {
-        match self {
-            Self::Screenshot => "screenshots",
-            Self::Preview => "previews",
-        }
-    }
-
-    pub(crate) fn state_field(self) -> &'static str {
-        match self {
-            Self::Screenshot => "assetDeliveryState",
-            Self::Preview => "videoDeliveryState",
-        }
-    }
-}
+pub(crate) const HEADER_PLACEMENT: &str = "PRODUCT_PAGE_HEADER_ASSET";
+pub(crate) const SEARCH_PLACEMENT: &str = "APP_STORE_SEARCH_RESULTS_ASSET";
 
 #[derive(Debug)]
 pub(crate) struct AssetSet {
@@ -55,9 +37,16 @@ pub(crate) struct AssetSet {
 }
 
 #[derive(Debug)]
+pub(crate) struct PlacedImage {
+    pub placement: Value,
+    pub image: Result<Value, String>,
+}
+
+#[derive(Debug)]
 pub(crate) struct Media {
     pub screenshots: Result<Vec<AssetSet>, String>,
     pub previews: Result<Vec<AssetSet>, String>,
+    pub placements: Result<Vec<PlacedImage>, String>,
 }
 
 pub(crate) fn load<T: Transport>(
@@ -78,57 +67,111 @@ pub(crate) fn load<T: Transport>(
         return Err("The selected localization is invalid. Refresh app details.".into());
     }
     let route = format!("/apps/{app_id}/versions/{version_id}/localizations/{locale}");
-    let mut load_sets = |kind: Kind| -> Result<Vec<AssetSet>, String> {
-        let sets = api::list(
-            &mut transport,
-            &format!("{route}/{}?limit=200", kind.collection()),
-            cancelled,
-        )?;
-        sets.into_iter()
-            .map(|set| {
-                if cancelled.load(Ordering::Relaxed) {
-                    return Err("Media loading cancelled.".into());
-                }
-                for (field, expected) in [("appId", app_id), ("versionId", version_id)] {
-                    if let Some(owner) = set.get(field).filter(|v| !v.is_null())
-                        && owner.as_str() != Some(expected)
-                    {
-                        return Err(
-                            "Parsequerade returned media for a different app or version.".into(),
-                        );
+    let mut load_sets =
+        |collection: &str, assets: &str, display_field: &str| -> Result<Vec<AssetSet>, String> {
+            let sets = api::list(
+                &mut transport,
+                &format!("{route}/{collection}?limit=200"),
+                cancelled,
+            )?;
+            sets.into_iter()
+                .map(|set| {
+                    if cancelled.load(Ordering::Relaxed) {
+                        return Err("Media loading cancelled.".into());
                     }
-                }
-                let set_id = id(&set)?;
-                Ok(AssetSet {
-                    display_type: attr(
-                        &set,
-                        match kind {
-                            Kind::Screenshot => "screenshotDisplayType",
-                            Kind::Preview => "previewType",
-                        },
-                    )
-                    .into(),
-                    assets: api::list(
-                        &mut transport,
-                        &format!(
-                            "/{}/{set_id}/{}?limit=200",
-                            kind.collection(),
-                            kind.assets()
+                    check_selection(&set, app_id, version_id)?;
+                    let set_id = id(&set)?;
+                    Ok(AssetSet {
+                        display_type: attr(&set, display_field).into(),
+                        assets: api::list(
+                            &mut transport,
+                            &format!("/{collection}/{set_id}/{assets}?limit=200"),
+                            cancelled,
                         ),
-                        cancelled,
-                    ),
+                    })
                 })
-            })
-            .collect()
-    };
+                .collect()
+        };
     let media = Media {
-        screenshots: load_sets(Kind::Screenshot),
-        previews: load_sets(Kind::Preview),
+        screenshots: load_sets("screenshot-sets", "screenshots", "screenshotDisplayType"),
+        previews: load_sets("preview-sets", "previews", "previewType"),
+        placements: load_placements(&mut transport, &route, app_id, version_id, cancelled),
     };
     if cancelled.load(Ordering::Relaxed) {
         return Err("Media loading cancelled.".into());
     }
     Ok(media)
+}
+
+fn check_selection(resource: &Value, app_id: &str, version_id: &str) -> Result<(), String> {
+    for (field, expected) in [("appId", app_id), ("versionId", version_id)] {
+        if let Some(owner) = resource.get(field).filter(|v| !v.is_null())
+            && owner.as_str() != Some(expected)
+        {
+            return Err("Parsequerade returned media for a different app or version.".into());
+        }
+    }
+    Ok(())
+}
+
+fn load_placements<T: Transport>(
+    transport: &mut T,
+    route: &str,
+    app_id: &str,
+    version_id: &str,
+    cancelled: &AtomicBool,
+) -> Result<Vec<PlacedImage>, String> {
+    let placements = api::list(
+        transport,
+        &format!(
+            "{route}/placements?placementType={HEADER_PLACEMENT},{SEARCH_PLACEMENT}&limit=200"
+        ),
+        cancelled,
+    )?;
+    // Check the entire collection before following any image linkage.
+    for placement in &placements {
+        check_selection(placement, app_id, version_id)?;
+    }
+    let mut images = HashMap::new();
+    let mut result = Vec::new();
+    for placement in placements {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err("Media loading cancelled.".into());
+        }
+        if !matches!(
+            attr(&placement, "placementType"),
+            HEADER_PLACEMENT | SEARCH_PLACEMENT
+        ) || attr(&placement, "mediaType") == "VIDEO"
+        {
+            continue;
+        }
+        let image_id = attr(&placement, "imageId");
+        let image = if image_id.is_empty() {
+            Err("No image is linked to this placement.".into())
+        } else {
+            images
+                .entry(image_id.to_owned())
+                .or_insert_with(|| {
+                    validate_id(image_id)?;
+                    let (status, image) = transport.send(
+                        Method::GET,
+                        &format!("/library-images/{image_id}"),
+                        None,
+                    )?;
+                    if !(200..300).contains(&status) {
+                        return Err(api::api_error(status, &image));
+                    }
+                    if id(&image)? != image_id {
+                        return Err("Parsequerade returned a different library image.".into());
+                    }
+                    check_selection(&image, app_id, version_id)?;
+                    Ok(image)
+                })
+                .clone()
+        };
+        result.push(PlacedImage { placement, image });
+    }
+    Ok(result)
 }
 
 pub(crate) fn image_dimensions(asset: &Value, kind: Kind) -> Option<[u32; 2]> {
@@ -161,7 +204,7 @@ pub(crate) fn image_url(asset: &Value, kind: Kind) -> Option<Url> {
 
 fn image_asset(asset: &Value, kind: Kind) -> &Value {
     match kind {
-        Kind::Screenshot => &asset["imageAsset"],
+        Kind::Screenshot | Kind::LibraryImage => &asset["imageAsset"],
         Kind::Preview => &asset["previewFrameImage"]["image"],
     }
 }

@@ -18,15 +18,37 @@ pub(super) fn preview(details: &AppDetails, locale: &str) -> Gallery {
         "previewFrameImage":{"image":{"templateUrl":"https://example.invalid/preview/{w}x{h}.{f}","width":1290,"height":2796}},
         "videoDeliveryState":{"state":"COMPLETE"}, "videoUrl":"https://example.invalid/preview.mov"
     });
+    let placements: Vec<_> = [(media::HEADER_PLACEMENT, "header"), (media::SEARCH_PLACEMENT, "search")]
+        .into_iter()
+        .map(|(placement_type, name)| PlacedImage {
+            placement: json!({"id":format!("{name}-placement"), "placementType":placement_type, "mediaType":"IMAGE", "state":"PARENT_APPROVED"}),
+            image: Ok(json!({
+                "id":format!("{name}-image"), "fileName":format!("Fieldnotes {name} image.png"), "state":"APPROVED",
+                "imageAsset":{"templateUrl":format!("https://example.invalid/{name}/{{w}}x{{h}}.{{f}}"), "width":if name == "header" { 4320 } else { 1920 }, "height":1080}
+            })),
+        })
+        .collect();
     // Local fixture pixels keep rendering and interaction tests independent of the network.
     for (n, (asset, kind)) in assets
         .iter()
         .map(|a| (a, Kind::Screenshot))
         .chain(std::iter::once((&poster, Kind::Preview)))
+        .chain(
+            placements
+                .iter()
+                .map(|p| (p.image.as_ref().unwrap(), Kind::LibraryImage)),
+        )
         .enumerate()
     {
-        let width = 180;
-        let height = 390;
+        let (width, height) = if kind == Kind::LibraryImage {
+            (
+                320,
+                (320 * asset["imageAsset"]["height"].as_u64().unwrap()
+                    / asset["imageAsset"]["width"].as_u64().unwrap()) as usize,
+            )
+        } else {
+            (180, 390)
+        };
         let background = egui::Color32::from_rgb(245, 243, 236);
         let mut pixels = ColorImage::filled([width, height], background);
         let ink = egui::Color32::from_rgb(70, 80, 67);
@@ -54,6 +76,7 @@ pub(super) fn preview(details: &AppDetails, locale: &str) -> Gallery {
             display_type: "IPHONE_67".into(),
             assets: Ok(vec![poster]),
         }]),
+        placements: Ok(placements),
     }));
     gallery
 }
@@ -91,6 +114,7 @@ fn selection_changes_cancel_jobs_and_discard_images_from_previous_locales_and_ve
             .send(Ok(Media {
                 screenshots: Ok(vec![]),
                 previews: Ok(vec![]),
+                placements: Ok(vec![]),
             }))
             .ok();
         gallery
@@ -118,6 +142,7 @@ fn keeps_cached_media_when_reopening_the_same_selection() {
     gallery.result = Some(Ok(Media {
         screenshots: Ok(vec![]),
         previews: Ok(vec![]),
+        placements: Ok(vec![]),
     }));
     gallery.select(selection);
     assert!(gallery.result.is_some());
@@ -294,23 +319,208 @@ fn gallery_distinguishes_loading_empty_and_failed_reads_and_poster_processing() 
     let mut gallery = preview(&details, "en-US");
     gallery.result = None;
     let output = render(&ctx, &mut gallery, &details, vec2(768.0, 1024.0), vec![]);
-    assert!(labels(&output).contains(&"Loading screenshots and previews…"));
+    assert!(labels(&output).contains(&"Loading media…"));
     assert!(gallery.job.is_none());
     gallery.result = Some(Ok(Media {
         screenshots: Ok(vec![]),
         previews: Ok(vec![]),
+        placements: Ok(vec![]),
     }));
     let output = render(&ctx, &mut gallery, &details, vec2(768.0, 1024.0), vec![]);
     assert!(labels(&output).contains(&"No screenshots for this localization."));
     assert!(labels(&output).contains(&"No app previews for this localization."));
+    assert!(labels(&output).contains(&"No header images for this localization."));
+    assert!(labels(&output).contains(&"No search images for this localization."));
     gallery.result = Some(Ok(Media {
         screenshots: Err("Access was denied.".into()),
         previews: Ok(vec![]),
+        placements: Err("App Store Connect is temporarily unavailable. Please retry.".into()),
     }));
     let output = render(&ctx, &mut gallery, &details, vec2(768.0, 1024.0), vec![]);
     assert!(labels(&output).contains(&"Access was denied."));
     assert!(!labels(&output).contains(&"No screenshots for this localization."));
+    assert!(
+        labels(&output).contains(&"App Store Connect is temporarily unavailable. Please retry.")
+    );
+    assert!(!labels(&output).contains(&"No header images for this localization."));
     let poster = json!({"videoDeliveryState":{"state":"COMPLETE"},"previewFrameImage":{"state":{"state":"PROCESSING"}}});
     assert!(processing(&poster, Kind::Preview));
     assert_eq!(delivery_state(&poster, Kind::Preview), "PROCESSING");
+}
+
+fn creative_gallery(details: &AppDetails) -> Gallery {
+    let mut gallery = preview(details, "en-US");
+    let Some(Ok(media)) = &mut gallery.result else {
+        unreachable!()
+    };
+    media.screenshots = Ok(vec![]);
+    media.previews = Ok(vec![]);
+    gallery
+}
+
+#[test]
+fn header_and_search_images_open_and_fit_the_viewport_in_both_themes() {
+    let details = super::super::preview::preview_details();
+    for theme in [egui::Theme::Light, egui::Theme::Dark] {
+        for size in [
+            vec2(390.0, 844.0),
+            vec2(768.0, 1024.0),
+            vec2(1280.0, 800.0),
+            vec2(1440.0, 900.0),
+        ] {
+            let ctx = Context::default();
+            crate::style::configure(&ctx);
+            ctx.set_theme(theme);
+            let mut gallery = creative_gallery(&details);
+            for index in 0..2 {
+                let mut output = render(&ctx, &mut gallery, &details, size, vec![]);
+                for _ in 0..2 {
+                    output = render(&ctx, &mut gallery, &details, size, vec![]);
+                }
+                for label in [
+                    "Header images",
+                    "Search images",
+                    "Fieldnotes header image.png",
+                    "Fieldnotes search image.png",
+                ] {
+                    assert!(
+                        labels(&output).contains(&label),
+                        "Missing {label} at {size:?}"
+                    );
+                }
+                let rects: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::Shape::Rect(rect) if rect.brush.is_some() => Some(rect.rect),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(rects.len(), 2);
+                for (rect, aspect) in rects.iter().zip([4.0, 16.0 / 9.0]) {
+                    assert!(rect.min.x >= 0.0 && rect.max.x <= size.x);
+                    assert!(
+                        (rect.width() - rect.height() * aspect).abs() <= 3.0,
+                        "Image rect {rect:?} lost its aspect ratio at {size:?}"
+                    );
+                }
+                let position = rects[index].center();
+                for pressed in [true, false] {
+                    render(
+                        &ctx,
+                        &mut gallery,
+                        &details,
+                        size,
+                        vec![
+                            egui::Event::PointerMoved(position),
+                            egui::Event::PointerButton {
+                                pos: position,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ],
+                    );
+                }
+                assert_eq!(gallery.opened.as_ref().unwrap().1, Kind::LibraryImage);
+                for _ in 0..3 {
+                    output = render(&ctx, &mut gallery, &details, size, vec![]);
+                }
+                for shape in &output.shapes {
+                    if let egui::Shape::Text(text) = &shape.shape
+                        && text.galley.text() == "Close"
+                    {
+                        assert!(text.pos.x >= 0.0 && text.pos.x + text.galley.size().x <= size.x);
+                        assert!(text.pos.y >= 0.0 && text.pos.y + text.galley.size().y <= size.y);
+                    }
+                }
+                render(
+                    &ctx,
+                    &mut gallery,
+                    &details,
+                    size,
+                    vec![egui::Event::Key {
+                        key: egui::Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+                assert!(gallery.opened.is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn library_images_show_processing_and_keep_failures_next_to_the_affected_placement() {
+    let details = super::super::preview::preview_details();
+    let mut gallery = creative_gallery(&details);
+    let Some(Ok(media)) = &mut gallery.result else {
+        unreachable!()
+    };
+    let placements = media.placements.as_mut().unwrap();
+    placements[0].image =
+        Ok(json!({"id":"processing", "referenceName":"Header artwork", "state":"UPLOAD_COMPLETE"}));
+    placements[0].placement["state"] = json!("ASSET_PROCESSING");
+    placements[1].image = Err("Access was denied.".into());
+    let ctx = Context::default();
+    crate::style::configure(&ctx);
+    let output = render(&ctx, &mut gallery, &details, vec2(390.0, 844.0), vec![]);
+    let text = labels(&output);
+    for label in [
+        "Processing…",
+        "Header artwork",
+        "Placement: Asset Processing",
+        "Access was denied.",
+    ] {
+        assert!(text.contains(&label), "Missing {label}: {text:?}");
+    }
+    assert!(!text.contains(&"No header images for this localization."));
+    assert!(!text.contains(&"No search images for this localization."));
+}
+
+#[test]
+#[ignore = "requires an available offscreen GPU adapter"]
+fn render_header_and_search_image_previews() {
+    let details = super::super::preview::preview_details();
+    let output_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target");
+    std::fs::create_dir_all(&output_dir).unwrap();
+    for theme in [egui::Theme::Light, egui::Theme::Dark] {
+        for [width, height] in [[390, 844], [768, 1024], [1280, 800], [1440, 900]] {
+            let ctx = Context::default();
+            crate::style::configure(&ctx);
+            ctx.set_pixels_per_point(2.0);
+            ctx.set_theme(theme);
+            let mut gallery = creative_gallery(&details);
+            let mut textures = Vec::new();
+            let mut latest = None;
+            for _ in 0..3 {
+                let mut output = render(
+                    &ctx,
+                    &mut gallery,
+                    &details,
+                    vec2(width as f32, height as f32),
+                    vec![],
+                );
+                textures.append(&mut output.textures_delta.set);
+                latest = Some(output);
+            }
+            let theme_name = if theme == egui::Theme::Light {
+                "light"
+            } else {
+                "dark"
+            };
+            let path = output_dir.join(format!("ios-creative-images-{theme_name}-{width}.png"));
+            super::super::preview::screenshot(
+                &ctx,
+                latest.unwrap(),
+                textures,
+                path.to_str().unwrap(),
+                width * 2,
+                height * 2,
+            );
+        }
+    }
 }

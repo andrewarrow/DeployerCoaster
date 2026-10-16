@@ -16,7 +16,7 @@ use crate::{
     apple::{
         AppleCredentials,
         api::ParsequeradeApi,
-        media::{self, AssetSet, Kind, Media},
+        media::{self, AssetSet, Kind, Media, PlacedImage},
     },
     style::semibold,
 };
@@ -233,7 +233,7 @@ impl Gallery {
         });
         match &self.result {
             None => {
-                ui.label(RichText::new("Loading screenshots and previews…").color(palette.muted));
+                ui.label(RichText::new("Loading media…").color(palette.muted));
             }
             Some(Err(error)) => {
                 ui.add(Label::new(RichText::new(error).color(palette.error)).wrap());
@@ -257,6 +257,48 @@ impl Gallery {
                     &mut self.opened,
                     palette,
                 );
+                for (heading, placement_type, empty) in [
+                    (
+                        "Header images",
+                        media::HEADER_PLACEMENT,
+                        "No header images for this localization.",
+                    ),
+                    (
+                        "Search images",
+                        media::SEARCH_PLACEMENT,
+                        "No search images for this localization.",
+                    ),
+                ] {
+                    ui.add_space(24.0);
+                    ui.label(semibold(heading).size(14.0).color(palette.text));
+                    match &media.placements {
+                        Ok(placements) => {
+                            let images: Vec<_> = placements
+                                .iter()
+                                .filter(|image| {
+                                    attr(&image.placement, "placementType") == placement_type
+                                })
+                                .collect();
+                            if images.is_empty() {
+                                ui.label(RichText::new(empty).color(palette.muted));
+                            } else {
+                                ui.add_space(8.0);
+                                tile_grid(ui, &images, 240.0, 280.0, |ui, image| {
+                                    placed_image(
+                                        ui,
+                                        image,
+                                        &mut self.images,
+                                        &mut self.opened,
+                                        palette,
+                                    );
+                                });
+                            }
+                        }
+                        Err(error) => {
+                            ui.add(Label::new(RichText::new(error).color(palette.error)).wrap());
+                        }
+                    }
+                }
             }
         }
         self.show_opened(ui.ctx(), palette);
@@ -369,6 +411,7 @@ fn section(
             RichText::new(match kind {
                 Kind::Screenshot => "No screenshots for this localization.",
                 Kind::Preview => "No app previews for this localization.",
+                Kind::LibraryImage => "No images for this localization.",
             })
             .color(palette.muted),
         );
@@ -389,26 +432,79 @@ fn section(
                 return;
             }
             ui.add_space(4.0);
-            let columns = ((ui.available_width() + 16.0) / 164.0).floor().max(1.0) as usize;
-            let width =
-                ((ui.available_width() - 16.0 * (columns - 1) as f32) / columns as f32).min(180.0);
-            for row in assets.chunks(columns) {
-                ui.horizontal_top(|ui| {
-                    ui.spacing_mut().item_spacing.x = 16.0;
-                    for asset in row {
-                        ui.allocate_ui_with_layout(
-                            vec2(width, 0.0),
-                            Layout::top_down(Align::Min),
-                            |ui| {
-                                ui.set_width(width);
-                                tile(ui, asset, kind, images, opened, palette);
-                            },
-                        );
-                    }
+            tile_grid(ui, assets, 148.0, 180.0, |ui, asset| {
+                tile(ui, asset, kind, images, opened, palette);
+            });
+        });
+    }
+}
+
+fn tile_grid<T>(
+    ui: &mut Ui,
+    assets: &[T],
+    min_width: f32,
+    max_width: f32,
+    mut render: impl FnMut(&mut Ui, &T),
+) {
+    let columns = ((ui.available_width() + 16.0) / (min_width + 16.0))
+        .floor()
+        .max(1.0) as usize;
+    let width =
+        ((ui.available_width() - 16.0 * (columns - 1) as f32) / columns as f32).min(max_width);
+    for row in assets.chunks(columns) {
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 16.0;
+            for asset in row {
+                ui.allocate_ui_with_layout(vec2(width, 0.0), Layout::top_down(Align::Min), |ui| {
+                    ui.set_width(width);
+                    render(ui, asset);
                 });
-                ui.add_space(12.0);
             }
         });
+        ui.add_space(12.0);
+    }
+}
+
+fn placed_image(
+    ui: &mut Ui,
+    image: &PlacedImage,
+    images: &mut HashMap<String, CachedImage>,
+    opened: &mut Option<(Value, Kind)>,
+    palette: Palette,
+) {
+    match &image.image {
+        Ok(asset) => tile(ui, asset, Kind::LibraryImage, images, opened, palette),
+        Err(error) => {
+            let (rect, _) = ui.allocate_exact_size(
+                vec2(ui.available_width(), ui.available_width() * 9.0 / 16.0),
+                egui::Sense::hover(),
+            );
+            placeholder(ui, rect, "Image unavailable", palette);
+            ui.add(Label::new(RichText::new(error).color(palette.error)).wrap());
+        }
+    }
+    let state = attr(&image.placement, "state");
+    let state = state.strip_prefix("PARENT_").unwrap_or(state);
+    // The library asset and its use on this listing can have different states.
+    if !state.is_empty()
+        && image
+            .image
+            .as_ref()
+            .ok()
+            .is_none_or(|asset| attr(asset, "state") != state)
+    {
+        ui.add(
+            Label::new(
+                RichText::new(format!("Placement: {}", readable(state)))
+                    .size(11.0)
+                    .color(if state == "FAILED" {
+                        palette.error
+                    } else {
+                        palette.muted
+                    }),
+            )
+            .wrap(),
+        );
     }
 }
 
@@ -421,7 +517,17 @@ fn tile(
     palette: Palette,
 ) {
     let title = asset_title(asset, kind);
-    let size = vec2(ui.available_width(), 228.0);
+    let size = vec2(
+        ui.available_width(),
+        if kind == Kind::LibraryImage {
+            media::image_dimensions(asset, kind)
+                .map(|[width, height]| ui.available_width() * height as f32 / width as f32)
+                .unwrap_or(ui.available_width() * 9.0 / 16.0)
+                .clamp(44.0, 228.0)
+        } else {
+            228.0
+        },
+    );
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     if ui.is_rect_visible(rect) {
         let url = media::image_url(asset, kind);
@@ -510,12 +616,16 @@ fn asset_title(asset: &Value, kind: Kind) -> String {
     if !name.is_empty() {
         name.into()
     } else {
+        let reference = attr(asset, "referenceName");
+        if kind == Kind::LibraryImage && !reference.is_empty() {
+            return reference.into();
+        }
         format!(
             "{} {}",
-            if kind == Kind::Screenshot {
-                "Screenshot"
-            } else {
-                "Preview"
+            match kind {
+                Kind::Screenshot => "Screenshot",
+                Kind::Preview => "Preview",
+                Kind::LibraryImage => "Image",
             },
             attr(asset, "id")
         )
@@ -555,12 +665,16 @@ fn asset_info(ui: &mut Ui, asset: &Value, kind: Kind, palette: Palette) {
 fn processing(asset: &Value, kind: Kind) -> bool {
     matches!(
         delivery_state(asset, kind),
-        "AWAITING_UPLOAD" | "UPLOAD_COMPLETE" | "PROCESSING"
+        "AWAITING_UPLOAD" | "UPLOAD_COMPLETE" | "PROCESSING" | "ASSET_PROCESSING"
     )
 }
 
 fn delivery_state(asset: &Value, kind: Kind) -> &str {
-    let state = attr(&asset[kind.state_field()], "state");
+    let state = match kind {
+        Kind::Screenshot => attr(&asset["assetDeliveryState"], "state"),
+        Kind::Preview => attr(&asset["videoDeliveryState"], "state"),
+        Kind::LibraryImage => attr(asset, "state"),
+    };
     if kind == Kind::Preview && (state.is_empty() || state == "COMPLETE") {
         let frame_state = attr(&asset["previewFrameImage"]["state"], "state");
         if !frame_state.is_empty() {

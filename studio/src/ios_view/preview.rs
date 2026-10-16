@@ -128,7 +128,7 @@ pub(super) fn preview_details() -> AppDetails {
     }
 }
 
-fn screenshot(
+pub(super) fn screenshot(
     ctx: &egui::Context,
     output: egui::FullOutput,
     textures: Vec<(egui::TextureId, egui::epaint::ImageDelta)>,
