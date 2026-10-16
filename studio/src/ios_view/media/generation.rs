@@ -38,6 +38,9 @@ impl Generation {
 
     pub(super) fn verify(&mut self, result: &Result<Media, String>) {
         let Some(task) = &mut self.task else { return };
+        if task.receipt.is_none() && !task.codex.image_generation_running() {
+            task.receipt = task.request.complete().ok();
+        }
         let Some(receipt) = &task.receipt else { return };
         task.verification = Some(match result.as_ref().map(|m| &m.placements) {
             Ok(Ok(placements)) if placements.iter().any(|placed| {

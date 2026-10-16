@@ -133,9 +133,13 @@ impl ImageRequest {
             "CARGO_TARGET_DIR={} cargo run --quiet --locked --manifest-path {} --example upload_listing_image -- --credentials {} --app-id {} --version-id {} --locale {} --placement-type {} --png {} --receipt {}",
             shell_argument(&root.join("cargo-target").to_string_lossy()),
             shell_argument(&parsequerade.join("sdks/rust/Cargo.toml").to_string_lossy()),
-            shell_argument(&credentials.to_string_lossy()), shell_argument(app), shell_argument(version),
-            shell_argument(locale), shell_argument(kind.placement()),
-            shell_argument(&image.to_string_lossy()), shell_argument(&receipt.to_string_lossy()),
+            shell_argument(&credentials.to_string_lossy()),
+            shell_argument(app),
+            shell_argument(version),
+            shell_argument(locale),
+            shell_argument(kind.placement()),
+            shell_argument(&image.to_string_lossy()),
+            shell_argument(&receipt.to_string_lossy()),
         );
         let reference = json!({
             "appId": app, "versionId": version, "locale": locale,

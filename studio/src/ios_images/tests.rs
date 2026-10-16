@@ -88,15 +88,22 @@ fn uploader_arguments_quote_paths_and_credentials_are_private_and_temporary() {
     let path = snapshot.path().to_owned();
     let value: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     assert_eq!(value["connection"]["issuerId"], "selected-account");
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
     let retry = snapshot.clone();
     drop(snapshot);
     assert!(path.exists(), "retry keeps the selected connection alive");
     drop(retry);
-    assert!(!path.exists(), "credentials are removed when the request ends");
+    assert!(
+        !path.exists(),
+        "credentials are removed when the request ends"
+    );
 }
 
 #[test]
