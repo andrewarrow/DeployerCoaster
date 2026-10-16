@@ -707,10 +707,8 @@ impl Codex {
         });
         if let Some(error) = &self.error {
             ui.add(
-                egui::Label::new(
-                    egui::RichText::new(error).color(ui.visuals().error_fg_color),
-                )
-                .wrap(),
+                egui::Label::new(egui::RichText::new(error).color(ui.visuals().error_fg_color))
+                    .wrap(),
             );
         }
     }

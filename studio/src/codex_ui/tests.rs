@@ -408,8 +408,10 @@ fn settings_show_compact_connection_actions_without_the_chat_toggle() {
         })
         .collect();
     assert!(labels.contains(&"Signing in with ChatGPT…"));
-    assert!(labels.iter().any(|label| {
-        label.contains("previous sign-in attempt failed")
-    }));
+    assert!(
+        labels
+            .iter()
+            .any(|label| { label.contains("previous sign-in attempt failed") })
+    );
     assert!(!labels.contains(&"a-long-account-address@example.com"));
 }
