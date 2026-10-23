@@ -35,6 +35,13 @@ enum Outcome {
     Skipped,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum Device {
+    IphoneDuo,
+    Iphone,
+    Ipad,
+}
+
 impl Resize {
     pub(super) fn button(&mut self, ui: &mut Ui) {
         if ui
@@ -145,19 +152,49 @@ impl Resize {
     }
 }
 
-fn target_dimensions(path: &Path) -> Option<(u32, u32)> {
-    let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
-    if name.contains("iphone") {
-        Some((1206, 2622))
-    } else if name.contains("ipad") {
-        Some((2732, 2048))
-    } else {
-        None
+impl Device {
+    fn from_path(path: &Path) -> Option<Self> {
+        let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
+        if name.contains("iphone duo") {
+            Some(Self::IphoneDuo)
+        } else if name.contains("iphone") {
+            Some(Self::Iphone)
+        } else if name.contains("ipad") {
+            Some(Self::Ipad)
+        } else {
+            None
+        }
+    }
+
+    fn target_dimensions(&self, source: (u32, u32)) -> (u32, u32) {
+        match self {
+            Self::Iphone => (1206, 2622),
+            Self::Ipad => (2732, 2048),
+            Self::IphoneDuo => {
+                // App Store screenshot sizes differ from the inner panel's resolution.
+                // https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/
+                let outer = (1398, 2034);
+                let inner = (2007, 2853);
+                let ratio = f64::from(source.0.min(source.1)) / f64::from(source.0.max(source.1));
+                let outer_difference = (ratio - f64::from(outer.0) / f64::from(outer.1)).abs();
+                let inner_difference = (ratio - f64::from(inner.0) / f64::from(inner.1)).abs();
+                let (width, height) = if outer_difference <= inner_difference {
+                    outer
+                } else {
+                    inner
+                };
+                if source.0 > source.1 {
+                    (height, width)
+                } else {
+                    (width, height)
+                }
+            }
+        }
     }
 }
 
 fn resize_file(path: &Path) -> Result<Outcome, String> {
-    let Some((width, height)) = target_dimensions(path) else {
+    let Some(device) = Device::from_path(path) else {
         return Ok(Outcome::Skipped);
     };
     let reader = ImageReader::open(path)
@@ -167,6 +204,7 @@ fn resize_file(path: &Path) -> Result<Outcome, String> {
     let image = reader
         .decode()
         .map_err(|error| format!("Could not decode image: {error}"))?;
+    let (width, height) = device.target_dimensions((image.width(), image.height()));
     let resized = image
         .resize(width, height, imageops::FilterType::Lanczos3)
         .into_rgba8();

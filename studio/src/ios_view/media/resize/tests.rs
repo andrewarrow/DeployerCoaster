@@ -9,16 +9,62 @@ fn detects_device_case_insensitively_from_the_filename_only() {
         "01-IPHONE-home.PNG",
         "iphone.jpeg",
     ] {
-        assert_eq!(target_dimensions(Path::new(name)), Some((1206, 2622)));
+        assert_eq!(Device::from_path(Path::new(name)), Some(Device::Iphone));
     }
     for name in ["Simulator Screenshot - iPad Pro.png", "01-IPAD-home.webp"] {
-        assert_eq!(target_dimensions(Path::new(name)), Some((2732, 2048)));
+        assert_eq!(Device::from_path(Path::new(name)), Some(Device::Ipad));
+    }
+    for name in ["Screenshot iPhone Duo.png", "01-IPHONE DUO-home.PNG"] {
+        assert_eq!(Device::from_path(Path::new(name)), Some(Device::IphoneDuo));
     }
     assert_eq!(
-        target_dimensions(Path::new("/iPhone/screenshots/home.png")),
+        Device::from_path(Path::new("/iPhone/screenshots/home.png")),
         None
     );
-    assert_eq!(target_dimensions(Path::new("other.png")), None);
+    assert_eq!(Device::from_path(Path::new("other.png")), None);
+}
+
+#[test]
+fn duo_uses_the_official_display_and_orientation_for_each_example() {
+    for (name, source) in [
+        (
+            "Screenshot iPhone Duo 10-23-2026 at 4.02.54 AM.png",
+            (1398, 2034),
+        ),
+        (
+            "Screenshot iPhone Duo 10-23-2026 at 4.03.23 AM.png",
+            (2853, 2007),
+        ),
+        (
+            "Screenshot iPhone Duo 10-23-2026 at 4.03.26 AM.png",
+            (2853, 2007),
+        ),
+        (
+            "Screenshot iPhone Duo 10-23-2026 at 4.03.31 AM.png",
+            (2007, 2853),
+        ),
+    ] {
+        let device = Device::from_path(Path::new(name)).unwrap();
+        assert_eq!(device.target_dimensions(source), source, "{name}");
+    }
+}
+
+#[test]
+fn duo_recognizes_scaled_outer_and_inner_captures_in_both_orientations() {
+    for (source, target) in [
+        ((699, 1017), (1398, 2034)),
+        ((1017, 699), (2034, 1398)),
+        ((669, 951), (2007, 2853)),
+        ((951, 669), (2853, 2007)),
+        // Physical inner panel captures need the App Store screenshot dimensions.
+        ((1878, 2670), (2007, 2853)),
+        ((2670, 1878), (2853, 2007)),
+    ] {
+        assert_eq!(Device::IphoneDuo.target_dimensions(source), target);
+    }
+    // The originally requested fixed sizes continue to apply to other devices.
+    assert_eq!(Device::Iphone.target_dimensions((2853, 2007)), (1206, 2622));
+    assert_eq!(Device::Ipad.target_dimensions((1398, 2034)), (2732, 2048));
 }
 
 #[test]
@@ -30,6 +76,12 @@ fn resizes_in_place_with_the_correct_dimensions_aspect_ratio_and_centered_black_
         // An odd padding height leaves the extra pixel below the centered image.
         ("iPhone.png", (4, 2), (1206, 2622), (0, 1009, 1206, 603)),
         ("iPad.png", (2, 4), (2732, 2048), (854, 0, 1024, 2048)),
+        (
+            "iPhone Duo landscape.png",
+            (951, 669),
+            (2853, 2007),
+            (0, 0, 2853, 2007),
+        ),
         // Also exercise downscaling a screenshot larger than its target.
         (
             "iPhone-large.png",
@@ -57,7 +109,7 @@ fn resizes_in_place_with_the_correct_dimensions_aspect_ratio_and_centered_black_
             assert_eq!(*result.get_pixel(target.0 / 2, y + height), black);
         }
     }
-    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 3);
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 4);
 }
 
 #[test]
