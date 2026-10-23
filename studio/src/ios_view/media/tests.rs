@@ -260,6 +260,36 @@ fn labels(output: &egui::FullOutput) -> Vec<&str> {
 }
 
 #[test]
+fn screenshot_header_actions_fit_at_all_supported_sizes_in_both_themes() {
+    let details = super::super::preview::preview_details();
+    for theme in [egui::Theme::Light, egui::Theme::Dark] {
+        for size in [
+            vec2(390.0, 844.0),
+            vec2(768.0, 1024.0),
+            vec2(1280.0, 800.0),
+            vec2(1440.0, 900.0),
+        ] {
+            let ctx = Context::default();
+            crate::style::configure(&ctx);
+            ctx.set_theme(theme);
+            let mut gallery = preview(&details, "en-US");
+            let output = render(&ctx, &mut gallery, &details, size, vec![]);
+            let text = labels(&output);
+            for label in ["Screenshots", "Resize", "Reload media"] {
+                assert!(text.contains(&label), "Missing {label} at {size:?}");
+            }
+            for shape in &output.shapes {
+                if let egui::Shape::Text(text) = &shape.shape
+                    && ["Screenshots", "Resize", "Reload media"].contains(&text.galley.text())
+                {
+                    assert!(text.pos.x >= 0.0 && text.pos.x + text.galley.size().x <= size.x);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn thumbnails_open_an_enlarged_image_and_escape_closes_it_at_all_supported_sizes() {
     let details = super::super::preview::preview_details();
     for size in [

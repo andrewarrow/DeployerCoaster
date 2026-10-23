@@ -23,6 +23,7 @@ use crate::{
 };
 
 mod generation;
+mod resize;
 
 #[cfg(test)]
 mod tests;
@@ -61,6 +62,7 @@ pub(super) struct Gallery {
     image_job: Option<ImageJob>,
     opened: Option<(Value, Kind)>,
     generation: generation::Generation,
+    resize: resize::Resize,
 }
 
 impl Gallery {
@@ -70,7 +72,11 @@ impl Gallery {
     }
 
     pub(super) fn clear(&mut self) {
-        *self = Self::default();
+        // Local file resizing is independent of the selected app, version, and locale.
+        *self = Self {
+            resize: std::mem::take(&mut self.resize),
+            ..Self::default()
+        };
     }
 
     pub(super) fn cancel(&mut self) {
@@ -87,6 +93,7 @@ impl Gallery {
     }
 
     fn poll(&mut self) {
+        self.resize.poll();
         if let Some(job) = &self.job {
             match job.result.try_recv() {
                 Ok(result) => {
@@ -242,8 +249,10 @@ impl Gallery {
                 {
                     retry = true;
                 }
+                self.resize.button(ui);
             });
         });
+        self.resize.ui(ui, palette);
         match &self.result {
             None => {
                 ui.label(RichText::new("Loading media…").color(palette.muted));
